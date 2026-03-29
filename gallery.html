@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>osm-to-bedrock Screenshot Gallery</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    header h1 {
+      font-size: 2rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    header h1 a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    header h1 a:hover { text-decoration: underline; }
+
+    header p {
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+      gap: 1.5rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .card:hover { border-color: var(--accent); }
+
+    .card img {
+      width: 100%;
+      height: auto;
+      display: block;
+      cursor: pointer;
+    }
+
+    .card .caption {
+      padding: 0.75rem 1rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+
+    /* Lightbox */
+    .lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.92);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      cursor: zoom-out;
+    }
+
+    .lightbox.active { display: flex; }
+
+    .lightbox img {
+      max-width: 95vw;
+      max-height: 95vh;
+      border-radius: 6px;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 2.5rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 500px) {
+      .gallery { grid-template-columns: 1fr; }
+      header h1 { font-size: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><a href="https://github.com/paulrobello/osm-to-bedrock">osm-to-bedrock</a></h1>
+    <p>Convert OpenStreetMap data into playable Minecraft Bedrock Edition worlds</p>
+  </header>
+
+  <div class="gallery">
+    <div class="card">
+      <img src="screenshots/screenshot-map.png" alt="Web Explorer map view" onclick="openLightbox(this)">
+      <div class="caption">Web Explorer -- interactive map with bounding box selection</div>
+    </div>
+    <div class="card">
+      <img src="screenshots/screenshot-overpass.png" alt="Overpass data loaded on map" onclick="openLightbox(this)">
+      <div class="caption">Overpass API data loaded with feature layers</div>
+    </div>
+    <div class="card">
+      <img src="screenshots/screenshot-road-names.png" alt="Road name signs in Minecraft" onclick="openLightbox(this)">
+      <div class="caption">Street name signs placed along named roads</div>
+    </div>
+    <div class="card">
+      <img src="screenshots/screenshot-building-interior.png" alt="Building interior in Minecraft" onclick="openLightbox(this)">
+      <div class="caption">Building interiors with floor, ceiling, and perimeter walls</div>
+    </div>
+    <div class="card">
+      <img src="screenshots/screenshot-trees.png" alt="Trees and forests in Minecraft" onclick="openLightbox(this)">
+      <div class="caption">Procedurally placed trees in forested areas</div>
+    </div>
+    <div class="card">
+      <img src="screenshots/screenshot-location-poi.png" alt="POI markers and location search" onclick="openLightbox(this)">
+      <div class="caption">Location search and POI markers</div>
+    </div>
+    <div class="card">
+      <img src="screenshots/screenshot-3d-preview.png" alt="3D block preview" onclick="openLightbox(this)">
+      <div class="caption">3D surface preview before export</div>
+    </div>
+    <div class="card">
+      <img src="screenshots/screenshot-import.png" alt="Importing .mcworld into Minecraft" onclick="openLightbox(this)">
+      <div class="caption">Importing the .mcworld file into Minecraft Bedrock</div>
+    </div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/paulrobello/osm-to-bedrock">GitHub</a> &middot; MIT License &middot; Paul Robello
+  </footer>
+
+  <div class="lightbox" id="lightbox" onclick="closeLightbox()">
+    <img id="lightbox-img" src="" alt="Full size screenshot">
+  </div>
+
+  <script>
+    function openLightbox(img) {
+      document.getElementById('lightbox-img').src = img.src;
+      document.getElementById('lightbox').classList.add('active');
+    }
+    function closeLightbox() {
+      document.getElementById('lightbox').classList.remove('active');
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') closeLightbox();
+    });
+  </script>
+</body>
+</html>

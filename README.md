@@ -9,6 +9,8 @@ Convert [OpenStreetMap](https://www.openstreetmap.org/) data into playable **Min
 
 ![Web Explorer Map View](https://raw.githubusercontent.com/paulrobello/osm-to-bedrock/main/screenshots/screenshot-map.png)
 
+[View all screenshots](https://paulrobello.github.io/osm-to-bedrock/gallery.html)
+
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/probello3)
 
 ## Table of Contents
