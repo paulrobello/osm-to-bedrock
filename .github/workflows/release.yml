@@ -1,0 +1,267 @@
+name: Release
+
+# Builds standalone binaries for all platforms and creates a GitHub release.
+# Triggered manually via workflow_dispatch.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: osm-to-bedrock
+
+jobs:
+  # ── Build matrix ──────────────────────────────────────────────────────────
+
+  build-linux-x86_64:
+    name: Build - Linux x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build release binary
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Strip and prepare artifact
+        run: |
+          strip target/x86_64-unknown-linux-gnu/release/${{ env.BIN_NAME }}
+          mkdir -p release-binaries
+          cp target/x86_64-unknown-linux-gnu/release/${{ env.BIN_NAME }} release-binaries/${{ env.BIN_NAME }}-linux-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-linux-x86_64
+          path: release-binaries/${{ env.BIN_NAME }}-linux-x86_64
+          retention-days: 1
+
+  build-linux-arm64:
+    name: Build - Linux ARM64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Strip and prepare artifact
+        run: |
+          strip target/release/${{ env.BIN_NAME }}
+          mkdir -p release-binaries
+          cp target/release/${{ env.BIN_NAME }} release-binaries/${{ env.BIN_NAME }}-linux-aarch64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-linux-aarch64
+          path: release-binaries/${{ env.BIN_NAME }}-linux-aarch64
+          retention-days: 1
+
+  build-macos-x86_64:
+    name: Build - macOS x86_64
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Build release binary
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p release-binaries
+          cp target/x86_64-apple-darwin/release/${{ env.BIN_NAME }} release-binaries/${{ env.BIN_NAME }}-macos-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-macos-x86_64
+          path: release-binaries/${{ env.BIN_NAME }}-macos-x86_64
+          retention-days: 1
+
+  build-macos-arm64:
+    name: Build - macOS ARM64
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Build release binary
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p release-binaries
+          cp target/aarch64-apple-darwin/release/${{ env.BIN_NAME }} release-binaries/${{ env.BIN_NAME }}-macos-aarch64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-macos-aarch64
+          path: release-binaries/${{ env.BIN_NAME }}-macos-aarch64
+          retention-days: 1
+
+  build-windows-x86_64:
+    name: Build - Windows x86_64
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build release binary
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          mkdir -p release-binaries
+          cp target/x86_64-pc-windows-msvc/release/${{ env.BIN_NAME }}.exe release-binaries/${{ env.BIN_NAME }}-windows-x86_64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-windows-x86_64
+          path: release-binaries/${{ env.BIN_NAME }}-windows-x86_64.exe
+          retention-days: 1
+
+  # ── Publish to crates.io (parallel with builds) ───────────────────────────
+
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Get version
+        id: version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check if already published
+        id: check
+        run: |
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://crates.io/api/v1/crates/osm_to_bedrock/${{ steps.version.outputs.version }}" \
+            -H "User-Agent: osm-to-bedrock-ci")
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Already published, skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run tests
+        if: steps.check.outputs.skip != 'true'
+        run: cargo test --verbose
+
+      - name: Publish
+        if: steps.check.outputs.skip != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --token "$CARGO_REGISTRY_TOKEN"
+
+  # ── Create GitHub Release ─────────────────────────────────────────────────
+
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - build-linux-x86_64
+      - build-linux-arm64
+      - build-macos-x86_64
+      - build-macos-arm64
+      - build-windows-x86_64
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: get_version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: binaries
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd binaries
+          shasum -a 256 ./* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: List artifacts
+        run: ls -lh binaries/
+
+      - name: Create or update GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="v${{ steps.get_version.outputs.version }}"
+
+          if gh release view "$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $VERSION exists, deleting and recreating..."
+            gh release delete "$VERSION" --repo "${{ github.repository }}" --yes
+          fi
+
+          gh release create "$VERSION" \
+            --repo "${{ github.repository }}" \
+            --generate-notes \
+            --latest
+
+      - name: Upload release assets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload \
+            "v${{ steps.get_version.outputs.version }}" binaries/* \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+      - name: Discord notification
+        if: success()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        uses: Ilshidur/action-discord@master
+        with:
+          args: "Released ${{ github.event.repository.name }} v${{ steps.get_version.outputs.version }} -- https://github.com/${{ github.repository }}/releases/tag/v${{ steps.get_version.outputs.version }}"
+        continue-on-error: true
