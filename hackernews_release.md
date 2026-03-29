@@ -1,4 +1,4 @@
-# Show HN: osm-to-bedrock – Turn OpenStreetMap data into playable Minecraft Bedrock worlds
+# Show HN: osm-to-bedrock – OpenStreetMap to Minecraft Bedrock worlds
 
 **URL:** https://github.com/paulrobello/osm-to-bedrock
 
