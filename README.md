@@ -18,8 +18,6 @@ Convert [OpenStreetMap](https://www.openstreetmap.org/) data into playable **Min
 - [Getting Started](#getting-started)
 - [Features](#features)
 - [Installation](#installation)
-  - [From Source](#from-source)
-  - [Cargo Install](#cargo-install)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Subcommands](#subcommands)
@@ -76,34 +74,52 @@ New to osm-to-bedrock? Here are the quickest paths to a working Minecraft world:
 
 ## Installation
 
-### From Source
+### Pre-built Binaries
 
-Requires Rust stable and `cargo` (install via [rustup](https://rustup.rs/)):
+Download the latest binary for your platform from the [Releases page](https://github.com/paulrobello/osm-to-bedrock/releases):
+
+| Platform | Binary |
+|----------|--------|
+| Linux x86_64 | `osm-to-bedrock-linux-x86_64` |
+| Linux ARM64 | `osm-to-bedrock-linux-aarch64` |
+| macOS x86_64 | `osm-to-bedrock-macos-x86_64` |
+| macOS ARM64 (Apple Silicon) | `osm-to-bedrock-macos-aarch64` |
+| Windows x86_64 | `osm-to-bedrock-windows-x86_64.exe` |
 
 ```bash
-# Clone the repository
-git clone https://github.com/paulrobello/osm-to-bedrock
-cd osm-to-bedrock
-
-# Build release binary
-make build
-# binary at target/release/osm-to-bedrock
+# Example: Linux x86_64
+curl -LO https://github.com/paulrobello/osm-to-bedrock/releases/latest/download/osm-to-bedrock-linux-x86_64
+chmod +x osm-to-bedrock-linux-x86_64
+mv osm-to-bedrock-linux-x86_64 ~/.local/bin/osm-to-bedrock
 ```
 
 ### Cargo Install
 
 ```bash
-# Install from source (adds binary to ~/.cargo/bin)
+# Install from crates.io
+cargo install osm_to_bedrock
+
+# Or install from local source
 cargo install --path .
+```
+
+### From Source
+
+Requires Rust stable (install via [rustup](https://rustup.rs/)):
+
+```bash
+git clone https://github.com/paulrobello/osm-to-bedrock
+cd osm-to-bedrock
+make build
+# binary at target/release/osm-to-bedrock
 ```
 
 ### Prerequisites
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Rust | stable | Install via [rustup](https://rustup.rs/): `rustup install stable` |
-| cargo | (bundled with Rust) | |
-| bun | 1.1+ | Required only for the Web Explorer: [bun.sh](https://bun.sh) |
+| Rust | stable | Only needed for building from source: [rustup.rs](https://rustup.rs/) |
+| bun | 1.1+ | Only needed for the Web Explorer: [bun.sh](https://bun.sh) |
 
 ## Quick Start
 

@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt typecheck checkall web-check clean install web-dev web-build web-install web-kill kill stop serve-stop web-stop docker-build docker-run docker-stop
+.PHONY: build test lint fmt typecheck checkall web-check clean install web-dev web-build web-install web-kill kill stop serve-stop web-stop docker-build docker-run docker-stop pre-commit install-hooks
 
 build:
 	cargo build --release
@@ -66,6 +66,16 @@ kill: ## Force-kill both dev servers (ports 3002 + 8031)
 # make convert INPUT=city.osm.pbf OUTPUT=~/games/minecraft/worlds/MyCity
 convert:
 	cargo run --release -- convert --input $(INPUT) --output $(OUTPUT)
+
+pre-commit: ## Run pre-commit checks (fmt + lint + test)
+	@cargo fmt --check
+	@cargo clippy --all-targets -- -D warnings
+	@cargo test --quiet
+	@echo "Pre-commit checks passed!"
+
+install-hooks: ## Configure git to use .githooks/ for pre-commit
+	git config core.hooksPath .githooks
+	@echo "Git hooks installed from .githooks/"
 
 docker-build: ## Build the Docker image
 	docker build -t osm-to-bedrock .

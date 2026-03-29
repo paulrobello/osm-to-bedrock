@@ -26,6 +26,8 @@ Didn't want to deal with the CLI? There's a browser-based Web Explorer (Next.js 
 
 ![Web Explorer](https://raw.githubusercontent.com/paulrobello/osm-to-bedrock/main/screenshots/screenshot-map.png)
 
+[More screenshots](https://paulrobello.github.io/osm-to-bedrock/gallery.html)
+
 ## Technical details for the curious
 
 The pipeline processes the world in 64x64 chunk tiles with a background LevelDB writer thread, so memory stays bounded regardless of area size. SubChunk encoding uses the smallest valid bits-per-block from `[1,2,3,4,5,6,8,16]` to keep file sizes down. The LevelDB layer registers Mojang-compatible zlib and raw-deflate compressors.
