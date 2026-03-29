@@ -1,0 +1,38 @@
+# Rust build artifacts
+/target
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code / AI tooling
+*-mcp.json
+.gemini-clipboard
+.cc2cc-session-id
+claude_scratch/
+settings.local.json
+CLAUDE.local.md
+*.local
+*.local.*
+
+# Generated world exports
+map_exports/
+
+# Brainstorm mockups
+.superpowers/
+
+# Git worktrees
+.worktrees/
+
+# Environment / secrets
+.env
+.env.*
+*.log
+ENHANCEMENTS.md
