@@ -168,7 +168,7 @@ pub fn draw_bridge<F>(
                 let pz = cz + oz;
                 let psy = get_surface(px, pz);
                 // Only draw pillar if there's room between terrain and deck underside
-                if bridge_y - 2 >= psy + 1 {
+                if bridge_y - 2 > psy {
                     for py in (psy + 1)..=(bridge_y - 2) {
                         world.set_block(px, py, pz, Block::StoneBrick);
                     }

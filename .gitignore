@@ -36,3 +36,4 @@ map_exports/
 .env.*
 *.log
 ENHANCEMENTS.md
+graphify-out/

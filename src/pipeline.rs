@@ -170,12 +170,13 @@ pub fn zip_directory(dir: &Path, output_zip: &Path) -> Result<()> {
                 zip_writer.write_all(&buf)?;
 
                 *files_done += 1;
-                if total_files > 0 {
-                    let pct = *files_done * 100 / total_files;
-                    if pct / 10 > *last_logged_pct / 10 {
-                        *last_logged_pct = pct;
-                        log::info!("Zip progress: {pct}% ({}/{total_files} files)", *files_done);
-                    }
+                if let Some(pct) = (*files_done)
+                    .checked_mul(100)
+                    .and_then(|v| v.checked_div(total_files))
+                    && pct / 10 > *last_logged_pct / 10
+                {
+                    *last_logged_pct = pct;
+                    log::info!("Zip progress: {pct}% ({}/{total_files} files)", *files_done);
                 }
             }
         }
