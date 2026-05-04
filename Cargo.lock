@@ -1554,6 +1554,7 @@ dependencies = [
  "memmap2 0.9.10",
  "notify",
  "osmpbf",
+ "par-osm-rust",
  "quick-xml",
  "rayon",
  "reqwest",
@@ -1582,6 +1583,25 @@ dependencies = [
  "protobuf",
  "protobuf-codegen",
  "rayon",
+]
+
+[[package]]
+name = "par-osm-rust"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "flate2",
+ "log",
+ "memmap2 0.9.10",
+ "osmpbf",
+ "quick-xml",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "url",
+ "urlencoding",
 ]
 
 [[package]]
