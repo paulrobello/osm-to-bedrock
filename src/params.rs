@@ -3,9 +3,10 @@
 //! These types are passed through the pipeline functions and also used
 //! by the HTTP server to drive conversions without going through `clap`.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
+
+pub use par_osm_rust::overture::{OvertureParams, OvertureTheme, ThemePriority};
+pub use par_osm_rust::sources::{OvertureFailureMode, PoiSourceMode, SourceOptions, SourceStatus};
 
 /// Parameters for the OSM-to-Bedrock conversion pipeline.
 ///
@@ -49,121 +50,6 @@ pub struct ConvertParams {
     pub elevation_smoothing: i32,
     /// Terrain fill depth below surface in blocks (default 4).
     pub surface_thickness: i32,
-}
-
-/// Overture Maps theme selector.
-///
-/// Each variant corresponds to one or more Overture CLI `-t` types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OvertureTheme {
-    /// Buildings and structures.
-    Building,
-    /// Roads, paths, and transport links.
-    Transportation,
-    /// Named places (amenities, shops, tourism, etc.).
-    Place,
-    /// Land cover, land use, and water bodies.
-    Base,
-    /// Address points.
-    Address,
-}
-
-impl OvertureTheme {
-    /// Return all theme variants.
-    pub fn all() -> Vec<Self> {
-        vec![
-            Self::Building,
-            Self::Transportation,
-            Self::Place,
-            Self::Base,
-            Self::Address,
-        ]
-    }
-
-    /// Return the Overture CLI `-t` type string(s) for this theme.
-    ///
-    /// Most themes map to a single type, but `Base` maps to several.
-    pub fn cli_types(&self) -> Vec<&'static str> {
-        match self {
-            Self::Building => vec!["building"],
-            Self::Transportation => vec!["segment"],
-            Self::Place => vec!["place"],
-            Self::Base => vec!["land", "land_use", "water"],
-            Self::Address => vec!["address"],
-        }
-    }
-
-    /// Parse a theme name flexibly, accepting plural forms (e.g. "buildings").
-    pub fn from_str_loose(s: &str) -> Option<Self> {
-        match s.to_lowercase().trim_end_matches('s') {
-            "building" => Some(Self::Building),
-            "transportation" | "transport" | "road" | "segment" => Some(Self::Transportation),
-            "place" => Some(Self::Place),
-            "base" | "land" | "land_use" | "landuse" | "water" => Some(Self::Base),
-            "address" | "addr" => Some(Self::Address),
-            _ => None,
-        }
-    }
-}
-
-impl std::fmt::Display for OvertureTheme {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Building => write!(f, "building"),
-            Self::Transportation => write!(f, "transportation"),
-            Self::Place => write!(f, "place"),
-            Self::Base => write!(f, "base"),
-            Self::Address => write!(f, "address"),
-        }
-    }
-}
-
-/// Which data source wins when Overture and OSM both cover the same theme.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ThemePriority {
-    /// Use only Overture data for this theme.
-    Overture,
-    /// Use only OSM data for this theme.
-    Osm,
-    /// Merge both data sources (default).
-    #[default]
-    Both,
-}
-
-/// Parameters controlling Overture Maps data integration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OvertureParams {
-    /// Whether to fetch and merge Overture Maps data at all.
-    pub enabled: bool,
-    /// Which Overture themes to fetch.  Defaults to all themes.
-    pub themes: Vec<OvertureTheme>,
-    /// Per-theme priority override.  Missing keys default to [`ThemePriority::Both`].
-    pub priority: HashMap<OvertureTheme, ThemePriority>,
-    /// Timeout in seconds for the `overturemaps` CLI subprocess.
-    pub timeout_secs: u64,
-}
-
-impl Default for OvertureParams {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            themes: OvertureTheme::all(),
-            priority: HashMap::new(),
-            timeout_secs: 120,
-        }
-    }
-}
-
-impl OvertureParams {
-    /// Return the priority for a given theme, defaulting to [`ThemePriority::Both`].
-    pub fn priority_for(&self, theme: OvertureTheme) -> ThemePriority {
-        self.priority
-            .get(&theme)
-            .copied()
-            .unwrap_or(ThemePriority::Both)
-    }
 }
 
 /// Parameters for the terrain-only pipeline (SRTM elevation → Bedrock world).
