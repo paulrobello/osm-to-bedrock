@@ -35,6 +35,8 @@ pub struct Config {
     pub overture: Option<bool>,
     pub overture_themes: Option<String>,
     pub overture_timeout: Option<u64>,
+    pub poi_source: Option<String>,
+    pub overture_failure: Option<String>,
     pub snow_line: Option<i32>,
     pub elevation_smoothing: Option<i32>,
     pub surface_thickness: Option<i32>,
@@ -75,6 +77,8 @@ impl Config {
         merge_field!(self, other, overture);
         merge_field!(self, other, overture_themes);
         merge_field!(self, other, overture_timeout);
+        merge_field!(self, other, poi_source);
+        merge_field!(self, other, overture_failure);
         merge_field!(self, other, snow_line);
         merge_field!(self, other, elevation_smoothing);
         merge_field!(self, other, surface_thickness);
@@ -171,6 +175,36 @@ overture_timeout: 30
         assert!(cfg.poi_markers.is_none());
         assert!(cfg.elevation.is_none());
         assert!(cfg.overpass_url.is_none());
+    }
+
+    #[test]
+    fn parses_shared_source_options() {
+        let yaml = r#"
+poi_source: both
+overture_failure: strict
+"#;
+        let cfg: Config = serde_yaml_ng::from_str(yaml).unwrap();
+
+        assert_eq!(cfg.poi_source.as_deref(), Some("both"));
+        assert_eq!(cfg.overture_failure.as_deref(), Some("strict"));
+    }
+
+    #[test]
+    fn merge_preserves_shared_source_options() {
+        let mut high = Config {
+            poi_source: Some("osm-only".to_string()),
+            ..Config::default()
+        };
+        let low = Config {
+            poi_source: Some("both".to_string()),
+            overture_failure: Some("fail".to_string()),
+            ..Config::default()
+        };
+
+        high.merge(&low);
+
+        assert_eq!(high.poi_source.as_deref(), Some("osm-only"));
+        assert_eq!(high.overture_failure.as_deref(), Some("fail"));
     }
 
     /// An empty string deserialises to an all-`None` `Config`.

@@ -57,25 +57,47 @@ use crate::pipeline::{
 
 // ── Error wrapper ──────────────────────────────────────────────────────────
 
-/// A newtype around [`anyhow::Error`] that renders as an HTTP 500 JSON body.
+/// A wrapper around [`anyhow::Error`] that renders internal failures as generic
+/// HTTP 500 responses and explicit request validation failures as HTTP 400.
 ///
-/// The full error chain is logged at ERROR level but only a generic message is
-/// returned to the caller to avoid leaking internal file paths, OS error
-/// strings, or implementation details.
-struct ApiError(anyhow::Error);
+/// The full error chain is logged at ERROR level but internal response bodies
+/// remain generic to avoid leaking file paths, OS error strings, or
+/// implementation details.
+struct ApiError {
+    source: anyhow::Error,
+    status: StatusCode,
+    public_message: Option<String>,
+}
+
+impl ApiError {
+    fn bad_request(message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            source: anyhow::anyhow!(message.clone()),
+            status: StatusCode::BAD_REQUEST,
+            public_message: Some(message),
+        }
+    }
+}
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        // Log the full detail server-side; return a generic message to callers.
-        log::error!("Internal server error: {:#}", self.0);
-        let body = json!({ "error": "An internal server error occurred." });
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+        log::error!("API error: {:#}", self.source);
+        let message = self
+            .public_message
+            .unwrap_or_else(|| "An internal server error occurred.".to_string());
+        let body = json!({ "error": message });
+        (self.status, Json(body)).into_response()
     }
 }
 
 impl<E: Into<anyhow::Error>> From<E> for ApiError {
     fn from(e: E) -> Self {
-        ApiError(e.into())
+        Self {
+            source: e.into(),
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            public_message: None,
+        }
     }
 }
 
@@ -458,6 +480,12 @@ struct FetchConvertRequest {
     /// Timeout in seconds for the overturemaps CLI subprocess.
     #[serde(default = "default_overture_timeout")]
     overture_timeout: u64,
+    /// POI source mode: osm-only, overture-only, both, or overture-preferred.
+    #[serde(default)]
+    poi_source: Option<String>,
+    /// Overture failure behavior: fallback-to-osm or fail.
+    #[serde(default)]
+    overture_failure: Option<String>,
 }
 
 /// Conversion options for `POST /fetch-convert`.
@@ -492,12 +520,6 @@ struct FetchConvertOptions {
     elevation_smoothing: i32,
     #[serde(default = "default_surface_thickness")]
     surface_thickness: i32,
-    /// POI source mode: osm-only, overture-only, both, or overture-preferred.
-    #[serde(default)]
-    poi_source: Option<String>,
-    /// Overture failure behavior: fallback-to-osm or fail.
-    #[serde(default)]
-    overture_failure: Option<String>,
     #[serde(default = "default_true")]
     poi_decorations: bool,
     #[serde(default = "default_true")]
@@ -524,8 +546,6 @@ impl Default for FetchConvertOptions {
             vertical_scale: default_vertical_scale(),
             elevation_smoothing: default_elevation_smoothing(),
             surface_thickness: default_surface_thickness(),
-            poi_source: None,
-            overture_failure: None,
             poi_decorations: true,
             nature_decorations: true,
         }
@@ -560,6 +580,10 @@ fn parse_overture_failure_mode_for_server(
         "fail" | "strict" => Ok(crate::params::OvertureFailureMode::Fail),
         other => anyhow::bail!("unknown Overture failure mode '{other}'"),
     }
+}
+
+fn fetch_convert_phase_progress(conversion_progress: f32) -> f32 {
+    0.3 + conversion_progress.clamp(0.0, 1.0) * 0.7
 }
 
 // ── Handlers ───────────────────────────────────────────────────────────────
@@ -1312,8 +1336,14 @@ async fn fetch_convert_handler(
     let options = req.options;
     let force_refresh = req.force_refresh;
 
-    // Validate numeric parameters before accepting the job.
-    validate_fetch_convert_options(&options).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // Validate request parameters before accepting the job, so invalid source
+    // controls fail the request immediately instead of becoming async job errors.
+    validate_fetch_convert_options(&options).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let requested_poi_source_mode = parse_poi_source_mode_for_server(req.poi_source.as_deref())
+        .map_err(|e| ApiError::bad_request(format!("Invalid POI source mode: {e}")))?;
+    let overture_failure_mode =
+        parse_overture_failure_mode_for_server(req.overture_failure.as_deref())
+            .map_err(|e| ApiError::bad_request(format!("Invalid Overture failure mode: {e}")))?;
 
     // Enforce concurrency cap.
     let _permit = state.semaphore.clone().try_acquire_owned().map_err(|_| {
@@ -1371,22 +1401,6 @@ async fn fetch_convert_handler(
                 Some((theme, prio))
             })
             .collect();
-        let requested_poi_source_mode =
-            match parse_poi_source_mode_for_server(options.poi_source.as_deref()) {
-                Ok(mode) => mode,
-                Err(e) => {
-                    set_job_error(&jobs, &jid, format!("Invalid POI source mode: {e}"));
-                    return;
-                }
-            };
-        let overture_failure_mode =
-            match parse_overture_failure_mode_for_server(options.overture_failure.as_deref()) {
-                Ok(mode) => mode,
-                Err(e) => {
-                    set_job_error(&jobs, &jid, format!("Invalid Overture failure mode: {e}"));
-                    return;
-                }
-            };
         let source_options = crate::params::SourceOptions {
             filter: filter.clone(),
             overpass_url,
@@ -1491,7 +1505,7 @@ async fn fetch_convert_handler(
             map.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
-                    progress,
+                    progress: fetch_convert_phase_progress(progress),
                     message: msg.to_string(),
                 },
             );
@@ -2079,7 +2093,12 @@ pub async fn run(host: &str, port: u16) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_world_name;
+    use super::{
+        ApiError, FetchConvertRequest, fetch_convert_phase_progress,
+        parse_overture_failure_mode_for_server, parse_poi_source_mode_for_server,
+        sanitize_world_name,
+    };
+    use crate::params::{OvertureFailureMode, PoiSourceMode};
 
     #[test]
     fn normal_name_passes_through() {
@@ -2133,5 +2152,70 @@ mod tests {
             sanitize_world_name("world\r\nX-Evil: injected"),
             "worldX-Evil: injected"
         );
+    }
+
+    #[test]
+    fn bad_request_response_uses_request_error_status() {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse as _;
+
+        let response = ApiError::bad_request("Invalid POI source mode").into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn fetch_convert_source_options_deserialize_from_top_level() {
+        let req: FetchConvertRequest = serde_json::from_value(serde_json::json!({
+            "bbox": [51.5, -0.13, 51.52, -0.10],
+            "poi_source": "both",
+            "overture_failure": "strict",
+            "options": {
+                "world_name": "Source Test"
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(req.poi_source.as_deref(), Some("both"));
+        assert_eq!(req.overture_failure.as_deref(), Some("strict"));
+    }
+
+    #[test]
+    fn server_source_mode_parser_accepts_aliases_and_rejects_bad_values() {
+        assert_eq!(
+            parse_poi_source_mode_for_server(Some("osm")).unwrap(),
+            PoiSourceMode::OsmOnly
+        );
+        assert_eq!(
+            parse_poi_source_mode_for_server(Some("overture_only")).unwrap(),
+            PoiSourceMode::OvertureOnly
+        );
+        assert_eq!(
+            parse_poi_source_mode_for_server(Some("preferred")).unwrap(),
+            PoiSourceMode::OverturePreferred
+        );
+        assert!(parse_poi_source_mode_for_server(Some("bad-source")).is_err());
+    }
+
+    #[test]
+    fn server_failure_mode_parser_accepts_aliases_and_rejects_bad_values() {
+        assert_eq!(
+            parse_overture_failure_mode_for_server(Some("fallback")).unwrap(),
+            OvertureFailureMode::FallbackToOsm
+        );
+        assert_eq!(
+            parse_overture_failure_mode_for_server(Some("strict")).unwrap(),
+            OvertureFailureMode::Fail
+        );
+        assert!(parse_overture_failure_mode_for_server(Some("ignore")).is_err());
+    }
+
+    #[test]
+    fn fetch_convert_phase_progress_maps_conversion_after_fetch_window() {
+        assert_eq!(fetch_convert_phase_progress(0.0), 0.3);
+        assert_eq!(fetch_convert_phase_progress(0.5), 0.65);
+        assert_eq!(fetch_convert_phase_progress(1.0), 1.0);
+        assert_eq!(fetch_convert_phase_progress(-0.5), 0.3);
+        assert_eq!(fetch_convert_phase_progress(1.5), 1.0);
     }
 }

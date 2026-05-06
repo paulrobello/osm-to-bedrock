@@ -298,24 +298,24 @@ struct FetchConvertArgs {
     overture: bool,
 
     /// Comma-separated Overture themes to fetch (used when --overture is set)
-    #[arg(long, default_value = "building,transportation,place,base,address")]
-    overture_themes: String,
+    #[arg(long)]
+    overture_themes: Option<String>,
 
     /// Per-theme priority overrides, e.g. "building=overture,transportation=osm"
     #[arg(long, default_value = "")]
     overture_priority: String,
 
     /// POI source mode: osm-only, overture-only, both, or overture-preferred
-    #[arg(long, default_value = "overture-preferred")]
-    poi_source: String,
+    #[arg(long)]
+    poi_source: Option<String>,
 
     /// Overture failure behavior: fallback-to-osm or fail
-    #[arg(long, default_value = "fallback-to-osm")]
-    overture_failure: String,
+    #[arg(long)]
+    overture_failure: Option<String>,
 
     /// Timeout in seconds for the overturemaps CLI subprocess
-    #[arg(long, default_value = "120")]
-    overture_timeout: u64,
+    #[arg(long)]
+    overture_timeout: Option<u64>,
 }
 
 /// Arguments for the `overture-convert` subcommand.
@@ -687,9 +687,28 @@ fn main() -> Result<()> {
                 .filter(|s| !s.is_empty())
                 .map(ToOwned::to_owned);
             let overture_enabled = args.overture || config.overture.unwrap_or(false);
-            let themes = parse_overture_themes(&args.overture_themes)?;
+            let overture_themes = args
+                .overture_themes
+                .as_deref()
+                .or(config.overture_themes.as_deref())
+                .unwrap_or("building,transportation,place,base,address");
+            let poi_source = args
+                .poi_source
+                .as_deref()
+                .or(config.poi_source.as_deref())
+                .unwrap_or("overture-preferred");
+            let overture_failure = args
+                .overture_failure
+                .as_deref()
+                .or(config.overture_failure.as_deref())
+                .unwrap_or("fallback-to-osm");
+            let overture_timeout = args
+                .overture_timeout
+                .or(config.overture_timeout)
+                .unwrap_or(120);
+            let themes = parse_overture_themes(overture_themes)?;
             let priority = parse_overture_priority(&args.overture_priority)?;
-            let requested_poi_source_mode = parse_poi_source_mode(&args.poi_source)?;
+            let requested_poi_source_mode = parse_poi_source_mode(poi_source)?;
             let source_options = params::SourceOptions {
                 filter: filter.clone(),
                 overpass_url: url,
@@ -698,14 +717,14 @@ fn main() -> Result<()> {
                     enabled: overture_enabled,
                     themes,
                     priority,
-                    timeout_secs: args.overture_timeout,
+                    timeout_secs: overture_timeout,
                 },
                 poi_source_mode: if overture_enabled {
                     requested_poi_source_mode
                 } else {
                     params::PoiSourceMode::OsmOnly
                 },
-                overture_failure_mode: parse_overture_failure_mode(&args.overture_failure)?,
+                overture_failure_mode: parse_overture_failure_mode(overture_failure)?,
             };
             let source_result = par_osm_rust::sources::fetch_map_data(
                 bbox,
