@@ -60,5 +60,6 @@ pub mod params;
 pub mod pipeline;
 pub mod server;
 pub mod sign;
+pub mod source_options;
 pub mod spatial;
 pub mod srtm;

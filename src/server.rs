@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Multipart, State},
@@ -553,37 +553,54 @@ impl Default for FetchConvertOptions {
 }
 
 fn parse_poi_source_mode_for_server(value: Option<&str>) -> Result<crate::params::PoiSourceMode> {
-    match value
-        .unwrap_or("overture-preferred")
-        .to_lowercase()
-        .replace('_', "-")
-        .as_str()
-    {
-        "osm" | "osm-only" => Ok(crate::params::PoiSourceMode::OsmOnly),
-        "overture" | "overture-only" => Ok(crate::params::PoiSourceMode::OvertureOnly),
-        "both" => Ok(crate::params::PoiSourceMode::Both),
-        "overture-preferred" | "preferred" => Ok(crate::params::PoiSourceMode::OverturePreferred),
-        other => anyhow::bail!("unknown POI source mode '{other}'"),
-    }
+    crate::source_options::parse_poi_source_mode(value.unwrap_or("overture-preferred"))
 }
 
 fn parse_overture_failure_mode_for_server(
     value: Option<&str>,
 ) -> Result<crate::params::OvertureFailureMode> {
-    match value
-        .unwrap_or("fallback-to-osm")
-        .to_lowercase()
-        .replace('_', "-")
-        .as_str()
-    {
-        "fallback" | "fallback-to-osm" => Ok(crate::params::OvertureFailureMode::FallbackToOsm),
-        "fail" | "strict" => Ok(crate::params::OvertureFailureMode::Fail),
-        other => anyhow::bail!("unknown Overture failure mode '{other}'"),
-    }
+    crate::source_options::parse_overture_failure_mode(value.unwrap_or("fallback-to-osm"))
 }
 
-fn fetch_convert_phase_progress(conversion_progress: f32) -> f32 {
-    0.3 + conversion_progress.clamp(0.0, 1.0) * 0.7
+#[derive(Debug)]
+struct ParsedFetchConvertSourceOptions {
+    themes: Vec<crate::params::OvertureTheme>,
+    priority: HashMap<crate::params::OvertureTheme, crate::params::ThemePriority>,
+    requested_poi_source_mode: crate::params::PoiSourceMode,
+    overture_failure_mode: crate::params::OvertureFailureMode,
+}
+
+fn parse_fetch_convert_source_options(
+    req: &FetchConvertRequest,
+) -> Result<ParsedFetchConvertSourceOptions> {
+    Ok(ParsedFetchConvertSourceOptions {
+        themes: crate::source_options::parse_overture_theme_list(&req.overture_themes)
+            .context("Invalid overture_themes")?,
+        priority: crate::source_options::parse_overture_priority_map(&req.overture_priority)
+            .context("Invalid overture_priority")?,
+        requested_poi_source_mode: parse_poi_source_mode_for_server(req.poi_source.as_deref())
+            .context("Invalid POI source mode")?,
+        overture_failure_mode: parse_overture_failure_mode_for_server(
+            req.overture_failure.as_deref(),
+        )
+        .context("Invalid Overture failure mode")?,
+    })
+}
+
+fn phase_progress(start: f32, end: f32, progress: f32) -> f32 {
+    start + progress.clamp(0.0, 1.0) * (end - start)
+}
+
+fn fetch_convert_elevation_phase_progress(elevation_progress: f32) -> f32 {
+    phase_progress(0.3, 0.45, elevation_progress)
+}
+
+fn fetch_convert_phase_progress(conversion_progress: f32, elevation_enabled: bool) -> f32 {
+    if elevation_enabled {
+        phase_progress(0.45, 1.0, conversion_progress)
+    } else {
+        phase_progress(0.3, 1.0, conversion_progress)
+    }
 }
 
 // ── Handlers ───────────────────────────────────────────────────────────────
@@ -1332,18 +1349,17 @@ async fn fetch_convert_handler(
     Json(req): Json<FetchConvertRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let bbox = (req.bbox[0], req.bbox[1], req.bbox[2], req.bbox[3]);
-    let filter = req.filter;
-    let options = req.options;
-    let force_refresh = req.force_refresh;
 
     // Validate request parameters before accepting the job, so invalid source
     // controls fail the request immediately instead of becoming async job errors.
-    validate_fetch_convert_options(&options).map_err(|e| ApiError::bad_request(e.to_string()))?;
-    let requested_poi_source_mode = parse_poi_source_mode_for_server(req.poi_source.as_deref())
-        .map_err(|e| ApiError::bad_request(format!("Invalid POI source mode: {e}")))?;
-    let overture_failure_mode =
-        parse_overture_failure_mode_for_server(req.overture_failure.as_deref())
-            .map_err(|e| ApiError::bad_request(format!("Invalid Overture failure mode: {e}")))?;
+    validate_fetch_convert_options(&req.options)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let parsed_source_options = parse_fetch_convert_source_options(&req)
+        .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
+
+    let filter = req.filter;
+    let options = req.options;
+    let force_refresh = req.force_refresh;
 
     // Enforce concurrency cap.
     let _permit = state.semaphore.clone().try_acquire_owned().map_err(|_| {
@@ -1370,53 +1386,29 @@ async fn fetch_convert_handler(
         .filter(|s| !s.is_empty())
         .map(ToOwned::to_owned);
     let req_overture = req.overture;
-    let req_overture_themes = req.overture_themes;
-    let req_overture_priority = req.overture_priority;
     let req_overture_timeout = req.overture_timeout;
+    let req_use_elevation = options.use_elevation;
 
     tokio::task::spawn_blocking(move || {
         // The permit is held for the duration of the blocking task.
         let _permit = _permit;
 
-        let themes: Vec<crate::params::OvertureTheme> = if req_overture_themes.is_empty() {
-            crate::params::OvertureTheme::all()
-        } else {
-            req_overture_themes
-                .iter()
-                .filter_map(|s| crate::params::OvertureTheme::from_str_loose(s))
-                .collect()
-        };
-        let priority: std::collections::HashMap<
-            crate::params::OvertureTheme,
-            crate::params::ThemePriority,
-        > = req_overture_priority
-            .iter()
-            .filter_map(|(k, v)| {
-                let theme = crate::params::OvertureTheme::from_str_loose(k)?;
-                let prio = match v.as_str() {
-                    "overture" => crate::params::ThemePriority::Overture,
-                    "osm" => crate::params::ThemePriority::Osm,
-                    _ => crate::params::ThemePriority::Both,
-                };
-                Some((theme, prio))
-            })
-            .collect();
         let source_options = crate::params::SourceOptions {
             filter: filter.clone(),
             overpass_url,
             use_overpass_cache: !force_refresh,
             overture: crate::params::OvertureParams {
                 enabled: req_overture,
-                themes,
-                priority,
+                themes: parsed_source_options.themes,
+                priority: parsed_source_options.priority,
                 timeout_secs: req_overture_timeout,
             },
             poi_source_mode: if req_overture {
-                requested_poi_source_mode
+                parsed_source_options.requested_poi_source_mode
             } else {
                 crate::params::PoiSourceMode::OsmOnly
             },
-            overture_failure_mode,
+            overture_failure_mode: parsed_source_options.overture_failure_mode,
         };
         let jobs_fetch = jobs.clone();
         let jid_fetch = jid.clone();
@@ -1462,7 +1454,15 @@ async fn fetch_convert_handler(
 
         // Optional: download SRTM elevation tiles for the requested bbox.
         let elevation_dir = if options.use_elevation {
-            match download_elevation_for_bbox(bbox.0, bbox.1, bbox.2, bbox.3, &jobs, &jid) {
+            match download_elevation_for_bbox_mapped(
+                bbox.0,
+                bbox.1,
+                bbox.2,
+                bbox.3,
+                &jobs,
+                &jid,
+                fetch_convert_elevation_phase_progress,
+            ) {
                 Ok(dir) => Some(dir),
                 Err(e) => {
                     set_job_error(&jobs, &jid, format!("Elevation download failed: {e}"));
@@ -1505,7 +1505,7 @@ async fn fetch_convert_handler(
             map.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
-                    progress: fetch_convert_phase_progress(progress),
+                    progress: fetch_convert_phase_progress(progress, req_use_elevation),
                     message: msg.to_string(),
                 },
             );
@@ -1891,6 +1891,20 @@ fn download_elevation_for_bbox(
     jobs: &Jobs,
     jid: &str,
 ) -> anyhow::Result<std::path::PathBuf> {
+    download_elevation_for_bbox_mapped(min_lat, min_lon, max_lat, max_lon, jobs, jid, |progress| {
+        progress * 0.2
+    })
+}
+
+fn download_elevation_for_bbox_mapped(
+    min_lat: f64,
+    min_lon: f64,
+    max_lat: f64,
+    max_lon: f64,
+    jobs: &Jobs,
+    jid: &str,
+    map_progress: impl Fn(f32) -> f32,
+) -> anyhow::Result<std::path::PathBuf> {
     let cache = crate::srtm::cache_dir();
     log::info!("SRTM cache: {}", cache.display());
     crate::srtm::download_tiles_for_bbox(
@@ -1904,7 +1918,7 @@ fn download_elevation_for_bbox(
             jobs.insert(
                 jid.to_string(),
                 JobState::Running {
-                    progress: i as f32 / total.max(1) as f32 * 0.2,
+                    progress: map_progress(i as f32 / total.max(1) as f32),
                     message: format!("Downloading elevation tile {name} ({}/{total})", i + 1),
                 },
             );
@@ -2094,7 +2108,8 @@ pub async fn run(host: &str, port: u16) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiError, FetchConvertRequest, fetch_convert_phase_progress,
+        ApiError, FetchConvertRequest, fetch_convert_elevation_phase_progress,
+        fetch_convert_phase_progress, parse_fetch_convert_source_options,
         parse_overture_failure_mode_for_server, parse_poi_source_mode_for_server,
         sanitize_world_name,
     };
@@ -2211,11 +2226,73 @@ mod tests {
     }
 
     #[test]
-    fn fetch_convert_phase_progress_maps_conversion_after_fetch_window() {
-        assert_eq!(fetch_convert_phase_progress(0.0), 0.3);
-        assert_eq!(fetch_convert_phase_progress(0.5), 0.65);
-        assert_eq!(fetch_convert_phase_progress(1.0), 1.0);
-        assert_eq!(fetch_convert_phase_progress(-0.5), 0.3);
-        assert_eq!(fetch_convert_phase_progress(1.5), 1.0);
+    fn fetch_convert_phase_progress_maps_conversion_after_fetch_window_without_elevation() {
+        assert_eq!(fetch_convert_phase_progress(0.0, false), 0.3);
+        assert_eq!(fetch_convert_phase_progress(0.5, false), 0.65);
+        assert_eq!(fetch_convert_phase_progress(1.0, false), 1.0);
+        assert_eq!(fetch_convert_phase_progress(-0.5, false), 0.3);
+        assert_eq!(fetch_convert_phase_progress(1.5, false), 1.0);
+    }
+
+    #[test]
+    fn fetch_convert_phase_progress_maps_elevation_and_conversion_monotonically() {
+        assert_eq!(fetch_convert_elevation_phase_progress(0.0), 0.3);
+        assert_eq!(fetch_convert_elevation_phase_progress(0.5), 0.375);
+        assert_eq!(fetch_convert_elevation_phase_progress(1.0), 0.45);
+        assert_eq!(fetch_convert_phase_progress(0.0, true), 0.45);
+        assert_eq!(fetch_convert_phase_progress(0.5, true), 0.725);
+        assert_eq!(fetch_convert_phase_progress(1.0, true), 1.0);
+    }
+
+    #[test]
+    fn fetch_convert_source_options_reject_invalid_overture_themes() {
+        let req: FetchConvertRequest = serde_json::from_value(serde_json::json!({
+            "bbox": [51.5, -0.13, 51.52, -0.10],
+            "overture_themes": ["building", "not-a-theme"]
+        }))
+        .unwrap();
+
+        let err = format!(
+            "{:#}",
+            parse_fetch_convert_source_options(&req).unwrap_err()
+        );
+
+        assert!(err.contains("unknown Overture theme 'not-a-theme'"));
+    }
+
+    #[test]
+    fn fetch_convert_source_options_reject_invalid_overture_priority_theme() {
+        let req: FetchConvertRequest = serde_json::from_value(serde_json::json!({
+            "bbox": [51.5, -0.13, 51.52, -0.10],
+            "overture_priority": {
+                "not-a-theme": "osm"
+            }
+        }))
+        .unwrap();
+
+        let err = format!(
+            "{:#}",
+            parse_fetch_convert_source_options(&req).unwrap_err()
+        );
+
+        assert!(err.contains("unknown Overture theme 'not-a-theme'"));
+    }
+
+    #[test]
+    fn fetch_convert_source_options_reject_invalid_overture_priority_value() {
+        let req: FetchConvertRequest = serde_json::from_value(serde_json::json!({
+            "bbox": [51.5, -0.13, 51.52, -0.10],
+            "overture_priority": {
+                "building": "bad-priority"
+            }
+        }))
+        .unwrap();
+
+        let err = format!(
+            "{:#}",
+            parse_fetch_convert_source_options(&req).unwrap_err()
+        );
+
+        assert!(err.contains("unknown priority 'bad-priority'"));
     }
 }

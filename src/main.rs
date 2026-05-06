@@ -12,7 +12,9 @@ use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use osm_to_bedrock::{config::Config, filter, osm_cache, overture, params, pipeline, server, srtm};
+use osm_to_bedrock::{
+    config::Config, filter, osm_cache, overture, params, pipeline, server, source_options, srtm,
+};
 
 use params::{ConvertParams, TerrainParams};
 use pipeline::{run_conversion, run_conversion_from_data, run_terrain_only_to_disk};
@@ -522,75 +524,6 @@ fn parse_bbox(s: &str) -> Result<(f64, f64, f64, f64)> {
     Ok((vals[0], vals[1], vals[2], vals[3]))
 }
 
-/// Parse a `ThemePriority` from a string ("overture", "osm", or "both").
-fn parse_theme_priority(s: &str) -> Result<params::ThemePriority> {
-    match s.to_lowercase().as_str() {
-        "overture" => Ok(params::ThemePriority::Overture),
-        "osm" => Ok(params::ThemePriority::Osm),
-        "both" => Ok(params::ThemePriority::Both),
-        _ => bail!("unknown priority '{s}' — expected overture, osm, or both"),
-    }
-}
-
-/// Parse `"building=overture,transportation=osm"` into a priority map.
-fn parse_overture_priority(
-    s: &str,
-) -> Result<HashMap<params::OvertureTheme, params::ThemePriority>> {
-    let mut map = HashMap::new();
-    if s.is_empty() {
-        return Ok(map);
-    }
-    for entry in s.split(',') {
-        let entry = entry.trim();
-        if entry.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = entry.splitn(2, '=').collect();
-        if parts.len() != 2 {
-            bail!("invalid overture-priority entry '{entry}' — expected 'theme=priority'");
-        }
-        let theme = params::OvertureTheme::from_str_loose(parts[0].trim())
-            .ok_or_else(|| anyhow::anyhow!("unknown Overture theme '{}'", parts[0].trim()))?;
-        let priority = parse_theme_priority(parts[1].trim())?;
-        map.insert(theme, priority);
-    }
-    Ok(map)
-}
-
-/// Parse `"building,transportation,place"` into a `Vec<OvertureTheme>`.
-fn parse_overture_themes(s: &str) -> Result<Vec<params::OvertureTheme>> {
-    if s.is_empty() {
-        return Ok(params::OvertureTheme::all());
-    }
-    s.split(',')
-        .map(|t| {
-            let t = t.trim();
-            params::OvertureTheme::from_str_loose(t)
-                .ok_or_else(|| anyhow::anyhow!("unknown Overture theme '{t}'"))
-        })
-        .collect()
-}
-
-fn parse_poi_source_mode(s: &str) -> Result<params::PoiSourceMode> {
-    match s.to_lowercase().replace('_', "-").as_str() {
-        "osm" | "osm-only" => Ok(params::PoiSourceMode::OsmOnly),
-        "overture" | "overture-only" => Ok(params::PoiSourceMode::OvertureOnly),
-        "both" => Ok(params::PoiSourceMode::Both),
-        "overture-preferred" | "preferred" => Ok(params::PoiSourceMode::OverturePreferred),
-        _ => bail!(
-            "unknown POI source mode '{s}' — expected osm-only, overture-only, both, or overture-preferred"
-        ),
-    }
-}
-
-fn parse_overture_failure_mode(s: &str) -> Result<params::OvertureFailureMode> {
-    match s.to_lowercase().replace('_', "-").as_str() {
-        "fallback" | "fallback-to-osm" => Ok(params::OvertureFailureMode::FallbackToOsm),
-        "fail" | "strict" => Ok(params::OvertureFailureMode::Fail),
-        _ => bail!("unknown Overture failure mode '{s}' — expected fallback-to-osm or fail"),
-    }
-}
-
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -687,28 +620,40 @@ fn main() -> Result<()> {
                 .filter(|s| !s.is_empty())
                 .map(ToOwned::to_owned);
             let overture_enabled = args.overture || config.overture.unwrap_or(false);
-            let overture_themes = args
-                .overture_themes
-                .as_deref()
-                .or(config.overture_themes.as_deref())
-                .unwrap_or("building,transportation,place,base,address");
-            let poi_source = args
-                .poi_source
-                .as_deref()
-                .or(config.poi_source.as_deref())
-                .unwrap_or("overture-preferred");
-            let overture_failure = args
-                .overture_failure
-                .as_deref()
-                .or(config.overture_failure.as_deref())
-                .unwrap_or("fallback-to-osm");
             let overture_timeout = args
                 .overture_timeout
                 .or(config.overture_timeout)
                 .unwrap_or(120);
-            let themes = parse_overture_themes(overture_themes)?;
-            let priority = parse_overture_priority(&args.overture_priority)?;
-            let requested_poi_source_mode = parse_poi_source_mode(poi_source)?;
+            let (themes, priority, poi_source_mode, overture_failure_mode) = if overture_enabled {
+                let overture_themes = args
+                    .overture_themes
+                    .as_deref()
+                    .or(config.overture_themes.as_deref())
+                    .unwrap_or("building,transportation,place,base,address");
+                let poi_source = args
+                    .poi_source
+                    .as_deref()
+                    .or(config.poi_source.as_deref())
+                    .unwrap_or("overture-preferred");
+                let overture_failure = args
+                    .overture_failure
+                    .as_deref()
+                    .or(config.overture_failure.as_deref())
+                    .unwrap_or("fallback-to-osm");
+                (
+                    source_options::parse_overture_themes(overture_themes)?,
+                    source_options::parse_overture_priority(&args.overture_priority)?,
+                    source_options::parse_poi_source_mode(poi_source)?,
+                    source_options::parse_overture_failure_mode(overture_failure)?,
+                )
+            } else {
+                (
+                    params::OvertureTheme::all(),
+                    HashMap::new(),
+                    params::PoiSourceMode::OsmOnly,
+                    params::OvertureFailureMode::FallbackToOsm,
+                )
+            };
             let source_options = params::SourceOptions {
                 filter: filter.clone(),
                 overpass_url: url,
@@ -719,12 +664,8 @@ fn main() -> Result<()> {
                     priority,
                     timeout_secs: overture_timeout,
                 },
-                poi_source_mode: if overture_enabled {
-                    requested_poi_source_mode
-                } else {
-                    params::PoiSourceMode::OsmOnly
-                },
-                overture_failure_mode: parse_overture_failure_mode(overture_failure)?,
+                poi_source_mode,
+                overture_failure_mode,
             };
             let source_result = par_osm_rust::sources::fetch_map_data(
                 bbox,
@@ -779,7 +720,7 @@ fn main() -> Result<()> {
         }
         Commands::OvertureConvert(args) => {
             let bbox = parse_bbox(&args.bbox)?;
-            let themes = parse_overture_themes(&args.themes)?;
+            let themes = source_options::parse_overture_themes(&args.themes)?;
             let overture_params = params::OvertureParams {
                 enabled: true,
                 themes,
