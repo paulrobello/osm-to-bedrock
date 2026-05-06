@@ -12,9 +12,7 @@ use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use osm_to_bedrock::{
-    config::Config, filter, osm_cache, overpass, overture, params, pipeline, server, srtm,
-};
+use osm_to_bedrock::{config::Config, filter, osm_cache, overture, params, pipeline, server, srtm};
 
 use params::{ConvertParams, TerrainParams};
 use pipeline::{run_conversion, run_conversion_from_data, run_terrain_only_to_disk};
@@ -307,6 +305,14 @@ struct FetchConvertArgs {
     #[arg(long, default_value = "")]
     overture_priority: String,
 
+    /// POI source mode: osm-only, overture-only, both, or overture-preferred
+    #[arg(long, default_value = "overture-preferred")]
+    poi_source: String,
+
+    /// Overture failure behavior: fallback-to-osm or fail
+    #[arg(long, default_value = "fallback-to-osm")]
+    overture_failure: String,
+
     /// Timeout in seconds for the overturemaps CLI subprocess
     #[arg(long, default_value = "120")]
     overture_timeout: u64,
@@ -565,6 +571,26 @@ fn parse_overture_themes(s: &str) -> Result<Vec<params::OvertureTheme>> {
         .collect()
 }
 
+fn parse_poi_source_mode(s: &str) -> Result<params::PoiSourceMode> {
+    match s.to_lowercase().replace('_', "-").as_str() {
+        "osm" | "osm-only" => Ok(params::PoiSourceMode::OsmOnly),
+        "overture" | "overture-only" => Ok(params::PoiSourceMode::OvertureOnly),
+        "both" => Ok(params::PoiSourceMode::Both),
+        "overture-preferred" | "preferred" => Ok(params::PoiSourceMode::OverturePreferred),
+        _ => bail!(
+            "unknown POI source mode '{s}' — expected osm-only, overture-only, both, or overture-preferred"
+        ),
+    }
+}
+
+fn parse_overture_failure_mode(s: &str) -> Result<params::OvertureFailureMode> {
+    match s.to_lowercase().replace('_', "-").as_str() {
+        "fallback" | "fallback-to-osm" => Ok(params::OvertureFailureMode::FallbackToOsm),
+        "fail" | "strict" => Ok(params::OvertureFailureMode::Fail),
+        _ => bail!("unknown Overture failure mode '{s}' — expected fallback-to-osm or fail"),
+    }
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -654,37 +680,42 @@ fn main() -> Result<()> {
                 railways: !(args.no_railways || config.no_railways.unwrap_or(false)),
             };
 
-            let url = match args
+            let url = args
                 .overpass_url
                 .as_deref()
                 .or(config.overpass_url.as_deref())
                 .filter(|s| !s.is_empty())
-            {
-                Some(u) => u.to_string(),
-                None => overpass::default_overpass_url().to_string(),
-            };
-            let mut data = overpass::fetch_osm_data(bbox, &filter, true, &url)?;
-
-            // Optionally merge Overture Maps data.
+                .map(ToOwned::to_owned);
             let overture_enabled = args.overture || config.overture.unwrap_or(false);
-            if overture_enabled {
-                let themes = parse_overture_themes(&args.overture_themes)?;
-                let priority = parse_overture_priority(&args.overture_priority)?;
-                let overture_params = params::OvertureParams {
-                    enabled: true,
+            let themes = parse_overture_themes(&args.overture_themes)?;
+            let priority = parse_overture_priority(&args.overture_priority)?;
+            let requested_poi_source_mode = parse_poi_source_mode(&args.poi_source)?;
+            let source_options = params::SourceOptions {
+                filter: filter.clone(),
+                overpass_url: url,
+                use_overpass_cache: true,
+                overture: params::OvertureParams {
+                    enabled: overture_enabled,
                     themes,
                     priority,
                     timeout_secs: args.overture_timeout,
-                };
-                let overture_data =
-                    overture::fetch_overture_data(bbox, &overture_params, &mut |progress, msg| {
-                        println!("[{:3.0}%] {msg}", progress * 100.0);
-                    })?;
-                data.merge(overture_data);
+                },
+                poi_source_mode: if overture_enabled {
+                    requested_poi_source_mode
+                } else {
+                    params::PoiSourceMode::OsmOnly
+                },
+                overture_failure_mode: parse_overture_failure_mode(&args.overture_failure)?,
+            };
+            let source_result = par_osm_rust::sources::fetch_map_data(
+                bbox,
+                &source_options,
+                &mut |progress, msg| println!("[{:3.0}%] {msg}", progress * 100.0),
+            )?;
+            for warning in &source_result.warnings {
+                log::warn!("{warning}");
             }
-
-            // Clip to requested bbox so cached larger areas don't bloat the world.
-            data.clip_to_bbox(bbox);
+            let data = source_result.data;
 
             let output = args.output.join(&args.world_name);
             std::fs::create_dir_all(&output)?;

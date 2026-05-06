@@ -492,6 +492,12 @@ struct FetchConvertOptions {
     elevation_smoothing: i32,
     #[serde(default = "default_surface_thickness")]
     surface_thickness: i32,
+    /// POI source mode: osm-only, overture-only, both, or overture-preferred.
+    #[serde(default)]
+    poi_source: Option<String>,
+    /// Overture failure behavior: fallback-to-osm or fail.
+    #[serde(default)]
+    overture_failure: Option<String>,
     #[serde(default = "default_true")]
     poi_decorations: bool,
     #[serde(default = "default_true")]
@@ -518,9 +524,41 @@ impl Default for FetchConvertOptions {
             vertical_scale: default_vertical_scale(),
             elevation_smoothing: default_elevation_smoothing(),
             surface_thickness: default_surface_thickness(),
+            poi_source: None,
+            overture_failure: None,
             poi_decorations: true,
             nature_decorations: true,
         }
+    }
+}
+
+fn parse_poi_source_mode_for_server(value: Option<&str>) -> Result<crate::params::PoiSourceMode> {
+    match value
+        .unwrap_or("overture-preferred")
+        .to_lowercase()
+        .replace('_', "-")
+        .as_str()
+    {
+        "osm" | "osm-only" => Ok(crate::params::PoiSourceMode::OsmOnly),
+        "overture" | "overture-only" => Ok(crate::params::PoiSourceMode::OvertureOnly),
+        "both" => Ok(crate::params::PoiSourceMode::Both),
+        "overture-preferred" | "preferred" => Ok(crate::params::PoiSourceMode::OverturePreferred),
+        other => anyhow::bail!("unknown POI source mode '{other}'"),
+    }
+}
+
+fn parse_overture_failure_mode_for_server(
+    value: Option<&str>,
+) -> Result<crate::params::OvertureFailureMode> {
+    match value
+        .unwrap_or("fallback-to-osm")
+        .to_lowercase()
+        .replace('_', "-")
+        .as_str()
+    {
+        "fallback" | "fallback-to-osm" => Ok(crate::params::OvertureFailureMode::FallbackToOsm),
+        "fail" | "strict" => Ok(crate::params::OvertureFailureMode::Fail),
+        other => anyhow::bail!("unknown Overture failure mode '{other}'"),
     }
 }
 
@@ -1296,10 +1334,11 @@ async fn fetch_convert_handler(
 
     let jobs = state.jobs.clone();
     let jid = job_id.clone();
-    let overpass_url = match req.overpass_url.as_deref().filter(|s| !s.is_empty()) {
-        Some(url) => url.to_string(),
-        None => crate::overpass::default_overpass_url().to_string(),
-    };
+    let overpass_url = req
+        .overpass_url
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
     let req_overture = req.overture;
     let req_overture_themes = req.overture_themes;
     let req_overture_priority = req.overture_priority;
@@ -1309,75 +1348,88 @@ async fn fetch_convert_handler(
         // The permit is held for the duration of the blocking task.
         let _permit = _permit;
 
-        // Fetch from Overpass (use cache unless force_refresh was requested)
-        let use_cache = !force_refresh;
-        let mut data =
-            match crate::overpass::fetch_osm_data(bbox, &filter, use_cache, &overpass_url) {
-                Ok(d) => d,
+        let themes: Vec<crate::params::OvertureTheme> = if req_overture_themes.is_empty() {
+            crate::params::OvertureTheme::all()
+        } else {
+            req_overture_themes
+                .iter()
+                .filter_map(|s| crate::params::OvertureTheme::from_str_loose(s))
+                .collect()
+        };
+        let priority: std::collections::HashMap<
+            crate::params::OvertureTheme,
+            crate::params::ThemePriority,
+        > = req_overture_priority
+            .iter()
+            .filter_map(|(k, v)| {
+                let theme = crate::params::OvertureTheme::from_str_loose(k)?;
+                let prio = match v.as_str() {
+                    "overture" => crate::params::ThemePriority::Overture,
+                    "osm" => crate::params::ThemePriority::Osm,
+                    _ => crate::params::ThemePriority::Both,
+                };
+                Some((theme, prio))
+            })
+            .collect();
+        let requested_poi_source_mode =
+            match parse_poi_source_mode_for_server(options.poi_source.as_deref()) {
+                Ok(mode) => mode,
                 Err(e) => {
-                    set_job_error(&jobs, &jid, format!("Overpass fetch failed: {e}"));
+                    set_job_error(&jobs, &jid, format!("Invalid POI source mode: {e}"));
                     return;
                 }
             };
-
-        // Optionally merge Overture Maps data.
-        if req_overture {
-            let themes: Vec<crate::params::OvertureTheme> = if req_overture_themes.is_empty() {
-                crate::params::OvertureTheme::all()
-            } else {
-                req_overture_themes
-                    .iter()
-                    .filter_map(|s| crate::params::OvertureTheme::from_str_loose(s))
-                    .collect()
+        let overture_failure_mode =
+            match parse_overture_failure_mode_for_server(options.overture_failure.as_deref()) {
+                Ok(mode) => mode,
+                Err(e) => {
+                    set_job_error(&jobs, &jid, format!("Invalid Overture failure mode: {e}"));
+                    return;
+                }
             };
-            let priority: std::collections::HashMap<
-                crate::params::OvertureTheme,
-                crate::params::ThemePriority,
-            > = req_overture_priority
-                .iter()
-                .filter_map(|(k, v)| {
-                    let theme = crate::params::OvertureTheme::from_str_loose(k)?;
-                    let prio = match v.as_str() {
-                        "overture" => crate::params::ThemePriority::Overture,
-                        "osm" => crate::params::ThemePriority::Osm,
-                        _ => crate::params::ThemePriority::Both,
-                    };
-                    Some((theme, prio))
-                })
-                .collect();
-            let overture_params = crate::params::OvertureParams {
-                enabled: true,
+        let source_options = crate::params::SourceOptions {
+            filter: filter.clone(),
+            overpass_url,
+            use_overpass_cache: !force_refresh,
+            overture: crate::params::OvertureParams {
+                enabled: req_overture,
                 themes,
                 priority,
                 timeout_secs: req_overture_timeout,
-            };
-            let jobs_ov = jobs.clone();
-            let jid_ov = jid.clone();
-            let overture_data = match crate::overture::fetch_overture_data(
-                bbox,
-                &overture_params,
-                &mut |progress, msg| {
-                    let mut map = jobs_ov.lock().expect("jobs lock poisoned");
-                    map.insert(
-                        jid_ov.clone(),
-                        JobState::Running {
-                            progress: progress * 0.3,
-                            message: msg.to_string(),
-                        },
-                    );
-                },
-            ) {
-                Ok(d) => d,
-                Err(e) => {
-                    set_job_error(&jobs, &jid, format!("Overture fetch failed: {e}"));
-                    return;
-                }
-            };
-            data.merge(overture_data);
+            },
+            poi_source_mode: if req_overture {
+                requested_poi_source_mode
+            } else {
+                crate::params::PoiSourceMode::OsmOnly
+            },
+            overture_failure_mode,
+        };
+        let jobs_fetch = jobs.clone();
+        let jid_fetch = jid.clone();
+        let source_result = match par_osm_rust::sources::fetch_map_data(
+            bbox,
+            &source_options,
+            &mut |progress, msg| {
+                let mut map = jobs_fetch.lock().expect("jobs lock poisoned");
+                map.insert(
+                    jid_fetch.clone(),
+                    JobState::Running {
+                        progress: progress * 0.3,
+                        message: msg.to_string(),
+                    },
+                );
+            },
+        ) {
+            Ok(result) => result,
+            Err(e) => {
+                set_job_error(&jobs, &jid, format!("Map data fetch failed: {e}"));
+                return;
+            }
+        };
+        for warning in &source_result.warnings {
+            log::warn!("{warning}");
         }
-
-        // Clip to the requested bbox so cached larger areas don't bloat the world.
-        data.clip_to_bbox(bbox);
+        let data = source_result.data;
 
         let output_dir = match tempfile::Builder::new().prefix("osm-world-").tempdir() {
             Ok(d) => d,
