@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-07
+
 ### Added
 - Web Explorer bounding-box draw tool and Overpass URL input with `localStorage` persistence
 - `~1/3` compression factor applied to `.mcworld` file size estimate in the export panel
@@ -23,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Atomic write-then-rename for SRTM HGT files (eliminates mmap TOCTOU race)
 - Next.js security headers: `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`
 - `CONTRIBUTING.md`, `LICENSE` (MIT), `docs/README.md` index, `web/.env.local.example`
+- Graphify git hooks for keeping the local code graph current after commits and branch switches
 
 ### Changed
 - Default map center changed from Sacramento to London (denser OSM coverage, globally recognisable)
@@ -30,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ways_by_id` changed from `HashMap<i64, OsmWay>` (clone) to `HashMap<i64, usize>` (index)
 - Error messages returned to HTTP clients are now generic; full errors logged server-side only
 - ESLint 10 compatibility: `settings.react.version` pinned to avoid removed `getFilename()` API
+- `par-osm-rust` now resolves from the published crates.io package instead of a sibling path dependency
+- Documentation style guide refreshed for public documentation consistency
 
 ### Fixed
 - Roads: skip centre line rendering (no yellow slab equivalent in vanilla Bedrock)
@@ -121,7 +126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Roads, buildings, water bodies, waterways, forests, land use areas
 - `level.dat` with creative mode, commands enabled, correct spawn point
 
-[Unreleased]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.3.0...v0.4.0

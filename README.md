@@ -4,6 +4,7 @@
 ![Runs on Linux | MacOS | Windows](https://img.shields.io/badge/runs%20on-Linux%20%7C%20MacOS%20%7C%20Windows-blue)
 ![Arch x86-64 | ARM | AppleSilicon](https://img.shields.io/badge/arch-x86--64%20%7C%20ARM%20%7C%20AppleSilicon-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-0.7.0-blue)
 
 Convert [OpenStreetMap](https://www.openstreetmap.org/) data into playable **Minecraft Bedrock Edition** worlds. Roads, buildings, waterways, forests, and land-use areas are all mapped to appropriate Minecraft blocks at 1:1 scale (one block = one metre, configurable). Includes a browser-based Web Explorer for selecting areas on a live map and exporting directly to `.mcworld` files.
 
@@ -60,6 +61,7 @@ New to osm-to-bedrock? Here are the quickest paths to a working Minecraft world:
 
 ### Data Sources
 - Overture Maps data integration — supplement or replace OSM data per theme
+- Published `par-osm-rust` data-source crate for shared Overpass, Overture, SRTM, parse, and cache behavior
 - Disk-based Overpass and Overture response cache with CLI management
 
 ### Web Explorer

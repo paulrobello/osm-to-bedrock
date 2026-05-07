@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "osm_to_bedrock"
-version = "0.1.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1588,6 +1588,8 @@ dependencies = [
 [[package]]
 name = "par-osm-rust"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a28e8ab79f740d1d86dda4ac905b6f5ccc0d020906833e60dc6fdb0cc55119a"
 dependencies = [
  "anyhow",
  "chrono",
