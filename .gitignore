@@ -37,3 +37,6 @@ map_exports/
 *.log
 ENHANCEMENTS.md
 graphify-out/
+
+# Local git hooks
+.githooks/
