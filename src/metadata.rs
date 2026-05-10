@@ -125,7 +125,12 @@ pub fn sha256_file(path: &Path) -> Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let digest = hasher.finalize();
+    let sha256 = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(sha256)
 }
 
 /// Build `SourceInfo` for a file-based conversion.

@@ -1,5 +1,9 @@
 # ── Stage 1: Build Rust binary ─────────────────────────────────────────
-FROM rust:1.87-bookworm AS rust-builder
+FROM rust:1.95-bookworm AS rust-builder
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends cmake && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
@@ -20,10 +24,10 @@ ENV NEXT_PUBLIC_API_URL=http://localhost:3002
 RUN bun run build
 
 # ── Stage 3: Runtime ──────────────────────────────────────────────────
-FROM debian:bookworm-slim
+FROM node:24-bookworm-slim
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates nodejs && \
+    apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
