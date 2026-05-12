@@ -115,14 +115,8 @@ const TAG_SUBCHUNK: u8 = 0x2f; // SubChunkPrefix
 const TAG_BLOCK_ENTITY: u8 = 0x31; // BlockEntity
 const TAG_FINALIZED: u8 = 0x36; // FinalizedState
 
-// ── World Y-range constants (Bedrock 1.18+) ─────────────────────────────
-/// Minimum Y coordinate (bottom of the world).
-pub const MIN_Y: i32 = -64;
-/// Maximum Y coordinate (top of the world, inclusive).
-pub const MAX_Y: i32 = 319;
-/// Total world height in blocks.
-#[allow(dead_code)]
-pub const WORLD_HEIGHT: i32 = MAX_Y - MIN_Y + 1; // 384
+// ── Re-exports from world module ──────────────────────────────────────────
+pub use crate::world::{ChunkData, Edition, MAX_Y, MIN_Y, WorldWriter};
 
 fn chunk_key(cx: i32, cz: i32, tag: u8) -> Vec<u8> {
     let mut k = Vec::with_capacity(9);
@@ -139,57 +133,6 @@ fn subchunk_key(cx: i32, cz: i32, sy: i8) -> Vec<u8> {
     k.push(TAG_SUBCHUNK);
     k.push(sy as u8);
     k
-}
-
-// ── ChunkData ─────────────────────────────────────────────────────────────
-
-/// In-memory representation of one 16×(height)×16 chunk column.
-///
-/// Blocks are stored in sub-chunks of 16×16×16, indexed XZY (x*256 + z*16 + y_local).
-/// Only non-empty sub-chunks are allocated.
-#[derive(Default)]
-pub struct ChunkData {
-    /// Map from sub-chunk Y index → block array (4096 entries, XZY).
-    subchunks: HashMap<i8, Box<[Block; 4096]>>,
-}
-
-impl ChunkData {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    fn idx(lx: i32, ly: i32, lz: i32) -> usize {
-        // XZY order: x * 256 + z * 16 + y_local
-        (lx as usize) * 256 + (lz as usize) * 16 + ly as usize
-    }
-
-    /// Set a block at local-x, world-y, local-z.
-    pub fn set(&mut self, lx: i32, y: i32, lz: i32, block: Block) {
-        let sy = y.div_euclid(16) as i8;
-        let ly = y.rem_euclid(16);
-        let entry = self
-            .subchunks
-            .entry(sy)
-            .or_insert_with(|| Box::new([Block::Air; 4096]));
-        entry[Self::idx(lx, ly, lz)] = block;
-    }
-
-    /// Get a block at local-x, world-y, local-z.
-    pub fn get(&self, lx: i32, y: i32, lz: i32) -> Block {
-        let sy = y.div_euclid(16) as i8;
-        let ly = y.rem_euclid(16);
-        self.subchunks
-            .get(&sy)
-            .map(|sc| sc[Self::idx(lx, ly, lz)])
-            .unwrap_or(Block::Air)
-    }
-
-    /// Iterate sub-chunks that have at least one non-air block.
-    fn non_empty_subchunks(&self) -> impl Iterator<Item = (i8, &[Block; 4096])> {
-        self.subchunks
-            .iter()
-            .map(|(&sy, blocks)| (sy, blocks.as_ref()))
-    }
 }
 
 // ── ChunkWriter ────────────────────────────────────────────────────────────
@@ -619,6 +562,38 @@ impl BedrockWorld {
 
         std::fs::write(&path, &file).with_context(|| format!("writing {}", path.display()))?;
         Ok(())
+    }
+}
+
+// ── WorldWriter trait implementation ──────────────────────────────────────
+
+impl crate::world::WorldWriter for BedrockWorld {
+    fn set_block(&mut self, x: i32, y: i32, z: i32, block: Block) {
+        BedrockWorld::set_block(self, x, y, z, block)
+    }
+    fn get_block(&self, x: i32, y: i32, z: i32) -> Block {
+        BedrockWorld::get_block(self, x, y, z)
+    }
+    fn insert_chunk(&mut self, cx: i32, cz: i32, chunk: ChunkData) {
+        BedrockWorld::insert_chunk(self, cx, cz, chunk)
+    }
+    fn add_block_entity(&mut self, x: i32, y: i32, z: i32, nbt: Vec<u8>) {
+        BedrockWorld::add_block_entity(self, x, y, z, nbt)
+    }
+    fn set_sign_direction(&mut self, x: i32, y: i32, z: i32, direction: i32) {
+        BedrockWorld::set_sign_direction(self, x, y, z, direction)
+    }
+    fn set_block_direction(&mut self, x: i32, y: i32, z: i32, direction: i32) {
+        BedrockWorld::set_block_direction(self, x, y, z, direction)
+    }
+    fn chunk_count(&self) -> usize {
+        BedrockWorld::chunk_count(self)
+    }
+    fn occupied_chunks(&self) -> Vec<(i32, i32)> {
+        BedrockWorld::occupied_chunks(self)
+    }
+    fn save(&self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
+        BedrockWorld::save(self, spawn_x, spawn_y, spawn_z)
     }
 }
 

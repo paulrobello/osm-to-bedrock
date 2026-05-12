@@ -10,6 +10,7 @@ use crate::blocks::Block;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fmt;
+use std::path::Path;
 use std::str::FromStr;
 
 // ── World Y-range constants (Bedrock 1.18+ / Java 1.18+) ─────────────────
@@ -158,53 +159,55 @@ pub trait WorldWriter {
 }
 
 // ── Edition factory methods ──────────────────────────────────────────────
-// TODO: Uncomment once BedrockWorld implements WorldWriter (Task 2).
-//
-// impl Edition {
-//     /// Create an unbounded world for this edition.
-//     #[allow(dead_code)]
-//     pub fn create_world(&self, output: &Path) -> Box<dyn WorldWriter> {
-//         match self {
-//             Edition::Bedrock => Box::new(crate::bedrock::BedrockWorld::new(output)),
-//             Edition::Java => {
-//                 #[cfg(feature = "java")]
-//                 {
-//                     Box::new(crate::anvil::JavaWorld::new(output))
-//                 }
-//                 #[cfg(not(feature = "java"))]
-//                 {
-//                     panic!("Java Edition support requires the 'java' feature")
-//                 }
-//             }
-//         }
-//     }
-//
-//     /// Create a bounded world for incremental tile-based processing.
-//     #[allow(dead_code)]
-//     pub fn create_world_bounded(
-//         &self,
-//         output: &Path,
-//         min_cx: i32,
-//         max_cx: i32,
-//         min_cz: i32,
-//         max_cz: i32,
-//     ) -> Box<dyn WorldWriter> {
-//         match self {
-//             Edition::Bedrock => Box::new(crate::bedrock::BedrockWorld::new_bounded(
-//                 output, min_cx, max_cx, min_cz, max_cz,
-//             )),
-//             Edition::Java => {
-//                 #[cfg(feature = "java")]
-//                 {
-//                     Box::new(crate::anvil::JavaWorld::new_bounded(
-//                         output, min_cx, max_cx, min_cz, max_cz,
-//                     ))
-//                 }
-//                 #[cfg(not(feature = "java"))]
-//                 {
-//                     panic!("Java Edition support requires the 'java' feature")
-//                 }
-//             }
-//         }
-//     }
-// }
+
+#[allow(unexpected_cfgs)]
+impl Edition {
+    /// Create an unbounded world for this edition.
+    #[allow(dead_code)]
+    pub fn create_world(&self, output: &Path) -> Box<dyn WorldWriter> {
+        match self {
+            Edition::Bedrock => Box::new(crate::bedrock::BedrockWorld::new(output)),
+            Edition::Java => {
+                #[cfg(feature = "java")]
+                {
+                    Box::new(crate::anvil::JavaWorld::new(output))
+                }
+                #[cfg(not(feature = "java"))]
+                {
+                    let _ = output;
+                    panic!("Java Edition support requires the 'java' feature")
+                }
+            }
+        }
+    }
+
+    /// Create a bounded world for incremental tile-based processing.
+    #[allow(dead_code)]
+    pub fn create_world_bounded(
+        &self,
+        output: &Path,
+        min_cx: i32,
+        max_cx: i32,
+        min_cz: i32,
+        max_cz: i32,
+    ) -> Box<dyn WorldWriter> {
+        match self {
+            Edition::Bedrock => Box::new(crate::bedrock::BedrockWorld::new_bounded(
+                output, min_cx, max_cx, min_cz, max_cz,
+            )),
+            Edition::Java => {
+                #[cfg(feature = "java")]
+                {
+                    Box::new(crate::anvil::JavaWorld::new_bounded(
+                        output, min_cx, max_cx, min_cz, max_cz,
+                    ))
+                }
+                #[cfg(not(feature = "java"))]
+                {
+                    let _ = (output, min_cx, max_cx, min_cz, max_cz);
+                    panic!("Java Edition support requires the 'java' feature")
+                }
+            }
+        }
+    }
+}
