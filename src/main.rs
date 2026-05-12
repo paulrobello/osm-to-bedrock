@@ -24,7 +24,7 @@ use pipeline::{run_conversion, run_conversion_from_data, run_terrain_only_to_dis
 #[derive(Parser, Debug)]
 #[command(
     name = "osm-to-bedrock",
-    about = "Convert OpenStreetMap data to Minecraft Bedrock Edition worlds",
+    about = "Convert OpenStreetMap data to Minecraft Bedrock or Java Edition worlds",
     version
 )]
 struct Cli {
@@ -42,11 +42,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Convert an OSM PBF file to a Minecraft Bedrock world
+    /// Convert an OSM PBF file to a Minecraft world
     Convert(ConvertArgs),
     /// Run the HTTP API server
     Serve(ServeArgs),
-    /// Fetch OSM data from Overpass and convert to a Minecraft Bedrock world
+    /// Fetch OSM data from Overpass and convert to a Minecraft world
     FetchConvert(FetchConvertArgs),
     /// Generate a terrain-only world from SRTM elevation data (no OSM required)
     TerrainConvert(TerrainConvertArgs),
@@ -63,7 +63,7 @@ struct ConvertArgs {
     #[arg(short, long)]
     input: PathBuf,
 
-    /// Output Bedrock world directory
+    /// Output world directory
     #[arg(short, long)]
     output: PathBuf,
 
@@ -146,6 +146,10 @@ struct ConvertArgs {
     /// Watch the input file for changes and re-convert automatically
     #[arg(long, default_value = "false")]
     watch: bool,
+
+    /// Output edition: bedrock or java
+    #[arg(long, value_enum, default_value = "bedrock")]
+    edition: osm_to_bedrock::world::Edition,
 }
 
 /// Arguments for the `serve` subcommand.
@@ -197,7 +201,7 @@ struct FetchConvertArgs {
     #[arg(long)]
     bbox: String,
 
-    /// Output Bedrock world directory
+    /// Output world directory
     #[arg(short, long)]
     output: PathBuf,
 
@@ -318,16 +322,18 @@ struct FetchConvertArgs {
     /// Timeout in seconds for the overturemaps CLI subprocess
     #[arg(long)]
     overture_timeout: Option<u64>,
-}
 
-/// Arguments for the `overture-convert` subcommand.
+    /// Output edition: bedrock or java
+    #[arg(long, value_enum, default_value = "bedrock")]
+    edition: osm_to_bedrock::world::Edition,
+}
 #[derive(Parser, Debug)]
 struct OvertureConvertArgs {
     /// Bounding box as "south,west,north,east" (decimal degrees)
     #[arg(long)]
     bbox: String,
 
-    /// Output Bedrock world directory
+    /// Output world directory
     #[arg(short, long)]
     output: PathBuf,
 
@@ -406,6 +412,10 @@ struct OvertureConvertArgs {
     /// Timeout in seconds for the overturemaps CLI subprocess
     #[arg(long, default_value = "120")]
     overture_timeout: u64,
+
+    /// Output edition: bedrock or java
+    #[arg(long, value_enum, default_value = "bedrock")]
+    edition: osm_to_bedrock::world::Edition,
 }
 
 /// Arguments for the `terrain-convert` subcommand.
@@ -415,7 +425,7 @@ struct TerrainConvertArgs {
     #[arg(long)]
     bbox: String,
 
-    /// Output Bedrock world directory
+    /// Output world directory
     #[arg(short, long)]
     output: PathBuf,
 
@@ -470,6 +480,10 @@ struct TerrainConvertArgs {
     /// Spawn Z block coordinate (overrides --spawn-lat/lon)
     #[arg(long, allow_negative_numbers = true)]
     spawn_z: Option<i32>,
+
+    /// Output edition: bedrock or java
+    #[arg(long, value_enum, default_value = "bedrock")]
+    edition: osm_to_bedrock::world::Edition,
 }
 
 /// Arguments for the `cache` subcommand.
@@ -579,7 +593,7 @@ fn main() -> Result<()> {
             let terrain_params = TerrainParams {
                 bbox,
                 output,
-                edition: Default::default(),
+                edition: args.edition,
                 scale: args.scale.or(config.scale).unwrap_or(1.0),
                 sea_level: args.sea_level.or(config.sea_level).unwrap_or(65),
                 vertical_scale: args.vertical_scale.or(config.vertical_scale).unwrap_or(1.0),
@@ -684,7 +698,7 @@ fn main() -> Result<()> {
             let convert_params = ConvertParams {
                 input: None,
                 output,
-                edition: Default::default(),
+                edition: args.edition,
                 scale: args.scale.or(config.scale).unwrap_or(1.0),
                 sea_level: args.sea_level.or(config.sea_level).unwrap_or(65),
                 building_height: args.building_height.or(config.building_height).unwrap_or(8),
@@ -741,7 +755,7 @@ fn main() -> Result<()> {
             let convert_params = ConvertParams {
                 input: None,
                 output,
-                edition: Default::default(),
+                edition: args.edition,
                 scale: args.scale.or(config.scale).unwrap_or(1.0),
                 sea_level: args.sea_level.or(config.sea_level).unwrap_or(65),
                 building_height: args.building_height.or(config.building_height).unwrap_or(8),
@@ -921,7 +935,7 @@ fn run_convert(args: &ConvertArgs, config: &Config) -> Result<()> {
     let convert_params = ConvertParams {
         input: Some(args.input.clone()),
         output: args.output.clone(),
-        edition: Default::default(),
+        edition: args.edition,
         scale: args.scale.or(config.scale).unwrap_or(1.0),
         sea_level: args.sea_level.or(config.sea_level).unwrap_or(65),
         building_height: args.building_height.or(config.building_height).unwrap_or(8),

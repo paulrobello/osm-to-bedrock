@@ -309,6 +309,8 @@ struct ConvertOptions {
     poi_decorations: bool,
     #[serde(default = "default_true")]
     nature_decorations: bool,
+    #[serde(default)]
+    edition: crate::world::Edition,
 }
 
 impl Default for ConvertOptions {
@@ -338,6 +340,7 @@ impl Default for ConvertOptions {
             surface_thickness: default_surface_thickness(),
             poi_decorations: true,
             nature_decorations: true,
+            edition: Default::default(),
         }
     }
 }
@@ -524,6 +527,8 @@ struct FetchConvertOptions {
     poi_decorations: bool,
     #[serde(default = "default_true")]
     nature_decorations: bool,
+    #[serde(default)]
+    edition: crate::world::Edition,
 }
 
 impl Default for FetchConvertOptions {
@@ -548,6 +553,7 @@ impl Default for FetchConvertOptions {
             surface_thickness: default_surface_thickness(),
             poi_decorations: true,
             nature_decorations: true,
+            edition: Default::default(),
         }
     }
 }
@@ -919,7 +925,7 @@ async fn convert_handler(
         let params = ConvertParams {
             input: Some(tmp_path.to_path_buf()),
             output: world_dir.clone(),
-            edition: Default::default(),
+            edition: options.edition,
             scale: options.scale,
             sea_level: options.sea_level,
             building_height: options.building_height,
@@ -1147,7 +1153,7 @@ async fn preview_handler(mut multipart: Multipart) -> Result<impl IntoResponse, 
         let params = ConvertParams {
             input: Some(tmp_path.to_path_buf()),
             output: world_dir,
-            edition: Default::default(),
+            edition: options.edition,
             scale: options.scale,
             sea_level: options.sea_level,
             building_height: options.building_height,
@@ -1479,7 +1485,7 @@ async fn fetch_convert_handler(
         let params = ConvertParams {
             input: None,
             output: world_dir.clone(),
-            edition: Default::default(),
+            edition: options.edition,
             scale: options.scale,
             sea_level: options.sea_level,
             building_height: options.building_height,
@@ -1558,6 +1564,8 @@ struct TerrainConvertOptions {
     /// When true, auto-download SRTM tiles for the bbox. Defaults to true.
     #[serde(default = "default_true")]
     use_elevation: bool,
+    #[serde(default)]
+    edition: crate::world::Edition,
 }
 
 fn default_snow_line() -> i32 {
@@ -1580,6 +1588,7 @@ impl Default for TerrainConvertOptions {
             spawn_lat: None,
             spawn_lon: None,
             use_elevation: true,
+            edition: Default::default(),
         }
     }
 }
@@ -1651,7 +1660,7 @@ async fn terrain_convert_handler(
         let params = TerrainParams {
             bbox,
             output: world_dir.clone(),
-            edition: Default::default(),
+            edition: options.edition,
             scale: options.scale,
             sea_level: options.sea_level,
             vertical_scale: options.vertical_scale,
@@ -1825,7 +1834,7 @@ async fn overture_convert_handler(
         let params = ConvertParams {
             input: None,
             output: world_dir.clone(),
-            edition: Default::default(),
+            edition: options.edition,
             scale: options.scale,
             sea_level: options.sea_level,
             building_height: options.building_height,
