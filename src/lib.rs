@@ -52,6 +52,7 @@ pub mod geojson_export;
 pub mod geometry;
 pub mod metadata;
 pub mod nbt;
+pub mod nbt_be;
 pub mod osm;
 pub mod osm_cache;
 pub mod overpass;
