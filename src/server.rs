@@ -160,8 +160,9 @@ fn set_job_error(jobs: &Jobs, jid: &str, message: String) {
     );
 }
 
-/// Zip `world_dir` into a `.mcworld` archive, persist the containing temp directory
-/// to disk (so the file survives the `TempDir` drop), and record `JobState::Done`.
+/// Zip `world_dir` into a `.mcworld` (Bedrock) or `.zip` (Java) archive, persist
+/// the containing temp directory to disk (so the file survives the `TempDir` drop),
+/// and record `JobState::Done`.
 ///
 /// On failure the archive is left on the filesystem (it may be partial) and
 /// `JobState::Error` is recorded instead.
@@ -171,12 +172,17 @@ fn zip_and_persist(
     output_dir: tempfile::TempDir,
     world_dir: &Path,
     world_name: &str,
+    edition: crate::world::Edition,
 ) {
-    let mcworld_path = output_dir.path().join(format!("{world_name}.mcworld"));
-    match zip_directory(world_dir, &mcworld_path) {
+    let extension = match edition {
+        crate::world::Edition::Bedrock => "mcworld",
+        crate::world::Edition::Java => "zip",
+    };
+    let archive_path = output_dir.path().join(format!("{world_name}.{extension}"));
+    match zip_directory(world_dir, &archive_path) {
         Ok(()) => {
             let persisted_dir = output_dir.keep();
-            let final_path = persisted_dir.join(format!("{world_name}.mcworld"));
+            let final_path = persisted_dir.join(format!("{world_name}.{extension}"));
             let mut map = jobs.lock().expect("jobs lock poisoned");
             map.insert(
                 jid.to_string(),
@@ -187,7 +193,7 @@ fn zip_and_persist(
             );
         }
         Err(e) => {
-            set_job_error(jobs, jid, format!("Failed to create .mcworld: {e}"));
+            set_job_error(jobs, jid, format!("Failed to create .{extension}: {e}"));
         }
     }
 }
@@ -962,7 +968,14 @@ async fn convert_handler(
         });
 
         match result {
-            Ok(()) => zip_and_persist(&jobs, &jid, output_dir, &world_dir, &world_name),
+            Ok(()) => zip_and_persist(
+                &jobs,
+                &jid,
+                output_dir,
+                &world_dir,
+                &world_name,
+                options.edition,
+            ),
             Err(e) => set_job_error(&jobs, &jid, format!("Conversion failed: {e}")),
         }
     });
@@ -1522,7 +1535,14 @@ async fn fetch_convert_handler(
         });
 
         match result {
-            Ok(()) => zip_and_persist(&jobs, &jid, output_dir, &world_dir, &world_name),
+            Ok(()) => zip_and_persist(
+                &jobs,
+                &jid,
+                output_dir,
+                &world_dir,
+                &world_name,
+                options.edition,
+            ),
             Err(e) => set_job_error(&jobs, &jid, format!("Conversion failed: {e}")),
         }
     });
@@ -1690,7 +1710,14 @@ async fn terrain_convert_handler(
         });
 
         match result {
-            Ok(()) => zip_and_persist(&jobs, &jid, output_dir, &world_dir, &world_name),
+            Ok(()) => zip_and_persist(
+                &jobs,
+                &jid,
+                output_dir,
+                &world_dir,
+                &world_name,
+                options.edition,
+            ),
             Err(e) => set_job_error(&jobs, &jid, format!("Terrain generation failed: {e:#}")),
         }
     });
@@ -1871,7 +1898,14 @@ async fn overture_convert_handler(
         });
 
         match result {
-            Ok(()) => zip_and_persist(&jobs, &jid, output_dir, &world_dir, &world_name),
+            Ok(()) => zip_and_persist(
+                &jobs,
+                &jid,
+                output_dir,
+                &world_dir,
+                &world_name,
+                options.edition,
+            ),
             Err(e) => set_job_error(&jobs, &jid, format!("Conversion failed: {e}")),
         }
     });
