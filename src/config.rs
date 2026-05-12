@@ -40,6 +40,7 @@ pub struct Config {
     pub snow_line: Option<i32>,
     pub elevation_smoothing: Option<i32>,
     pub surface_thickness: Option<i32>,
+    pub edition: Option<String>,
 }
 
 /// Emit a merge expression for a single field.
@@ -82,6 +83,7 @@ impl Config {
         merge_field!(self, other, snow_line);
         merge_field!(self, other, elevation_smoothing);
         merge_field!(self, other, surface_thickness);
+        merge_field!(self, other, edition);
     }
 
     /// Load a `Config` from a YAML file at `path`.

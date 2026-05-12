@@ -16,6 +16,7 @@
 //! let params = ConvertParams {
 //!     input: Some(PathBuf::from("map.osm.pbf")),
 //!     output: PathBuf::from("MyWorld"),
+//!     edition: osm_to_bedrock::world::Edition::default(),
 //!     scale: 1.0,
 //!     sea_level: 65,
 //!     building_height: 8,

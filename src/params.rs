@@ -17,6 +17,7 @@ pub struct ConvertParams {
     /// Input file path.  `None` when data is provided directly (e.g. from Overpass).
     pub input: Option<PathBuf>,
     pub output: PathBuf,
+    pub edition: crate::world::Edition,
     pub scale: f64,
     pub sea_level: i32,
     pub building_height: i32,
@@ -58,6 +59,7 @@ pub struct TerrainParams {
     pub bbox: (f64, f64, f64, f64),
     /// Output world directory.
     pub output: PathBuf,
+    pub edition: crate::world::Edition,
     /// Metres per block.
     pub scale: f64,
     /// Y coordinate for sea level.
