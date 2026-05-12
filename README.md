@@ -4,9 +4,9 @@
 ![Runs on Linux | MacOS | Windows](https://img.shields.io/badge/runs%20on-Linux%20%7C%20MacOS%20%7C%20Windows-blue)
 ![Arch x86-64 | ARM | AppleSilicon](https://img.shields.io/badge/arch-x86--64%20%7C%20ARM%20%7C%20AppleSilicon-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-0.7.0-blue)
+![Version](https://img.shields.io/badge/version-0.8.0-blue)
 
-Convert [OpenStreetMap](https://www.openstreetmap.org/) data into playable **Minecraft Bedrock Edition** worlds. Roads, buildings, waterways, forests, and land-use areas are all mapped to appropriate Minecraft blocks at 1:1 scale (one block = one metre, configurable). Includes a browser-based Web Explorer for selecting areas on a live map and exporting directly to `.mcworld` files.
+Convert [OpenStreetMap](https://www.openstreetmap.org/) data into playable **Minecraft Bedrock or Java Edition** worlds. Roads, buildings, waterways, forests, and land-use areas are all mapped to appropriate Minecraft blocks at 1:1 scale (one block = one metre, configurable). Includes a browser-based Web Explorer for selecting areas on a live map and exporting directly to `.mcworld` (Bedrock) or `.zip` (Java) files.
 
 ![Web Explorer Map View](https://raw.githubusercontent.com/paulrobello/osm-to-bedrock/main/screenshots/screenshot-map.png)
 
@@ -25,7 +25,7 @@ Convert [OpenStreetMap](https://www.openstreetmap.org/) data into playable **Min
 - [Web Explorer](#web-explorer)
 - [Documentation](#documentation)
 - [Getting OSM Data](#getting-osm-data)
-- [Adding the World to Minecraft Bedrock](#adding-the-world-to-minecraft-bedrock)
+- [Adding the World to Minecraft](#adding-the-world-to-minecraft)
 - [Architecture](#architecture)
 - [Known Limitations](#known-limitations)
 - [Contributing](#contributing)
@@ -126,8 +126,11 @@ make build
 ## Quick Start
 
 ```bash
-# Convert a local PBF file
+# Convert a local PBF file (Bedrock, default)
 osm-to-bedrock convert --input monaco-latest.osm.pbf --output MonacoWorld/
+
+# Convert for Java Edition
+osm-to-bedrock convert --input monaco-latest.osm.pbf --output MonacoJava/ --edition java
 
 # Fetch a bounding box from Overpass and convert in one step
 osm-to-bedrock fetch-convert \
@@ -160,6 +163,7 @@ building_height: 8
 signs: true
 elevation_smoothing: 1
 vertical_scale: 0.5
+edition: bedrock  # or "java"
 ```
 
 ## Subcommands
@@ -182,7 +186,7 @@ osm-to-bedrock convert \
 make convert INPUT=city.osm.pbf OUTPUT=~/games/worlds/MyCity
 ```
 
-Key options: `--scale`, `--sea-level`, `--building-height`, `--signs`, `--address-signs`, `--poi-markers`, `--elevation`, `--vertical-scale`, `--elevation-smoothing`, `--spawn-lat/lon`, `--watch`
+Key options: `--scale`, `--sea-level`, `--building-height`, `--signs`, `--address-signs`, `--poi-markers`, `--elevation`, `--vertical-scale`, `--elevation-smoothing`, `--spawn-lat/lon`, `--edition`, `--watch`
 
 ### fetch-convert
 
@@ -265,7 +269,7 @@ open http://localhost:8031
 - Configurable conversion parameters (scale, elevation, smoothing, building height, etc.)
 - Overture Maps data integration toggle
 - Conversion with real-time progress tracking
-- Direct `.mcworld` download
+- Direct `.mcworld` (Bedrock) or `.zip` (Java) download
 
 **Configuration:**
 
@@ -299,7 +303,9 @@ Download `.osm.pbf` extracts from:
 
 Or use `fetch-convert` / the Web Explorer to fetch directly from Overpass.
 
-## Adding the World to Minecraft Bedrock
+## Adding the World to Minecraft
+
+### Bedrock Edition
 
 Open the `.mcworld` file directly and Minecraft Bedrock will import it automatically. This works on all platforms (Windows, Android, iOS).
 
@@ -307,6 +313,13 @@ Alternatively, copy the output directory into your Bedrock worlds folder manuall
 - **Windows**: `%LocalAppData%\Packages\Microsoft.MinecraftUWP_*\LocalState\games\com.mojang\minecraftWorlds\`
 - **Android**: `/sdcard/games/com.mojang/minecraftWorlds/`
 - **iOS**: Use a file manager app to navigate to the Minecraft documents folder
+
+### Java Edition
+
+Copy the output directory into your Java Edition saves folder:
+- **Windows**: `%AppData%\.minecraft\saves\`
+- **macOS**: `~/Library/Application Support/minecraft/saves/`
+- **Linux**: `~/.minecraft/saves/`
 
 ## Architecture
 

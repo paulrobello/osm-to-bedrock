@@ -27,7 +27,7 @@ These flags apply to all subcommands:
 
 ## convert
 
-Convert a local `.osm.pbf` file to a Bedrock world directory.
+Convert a local `.osm.pbf` file to a Minecraft world directory (Bedrock or Java Edition).
 
 ```bash
 osm-to-bedrock convert --input city.osm.pbf --output MyWorld/
@@ -55,6 +55,7 @@ osm-to-bedrock convert --input city.osm.pbf --output MyWorld/
 | `--vertical-scale` | `1.0` | Blocks per metre of elevation change |
 | `--elevation-smoothing` | `1` | Median-filter radius to smooth elevation jitter (0 = off) |
 | `--surface-thickness` | `4` | Terrain fill depth below surface in blocks |
+| `--edition` | `bedrock` | Output edition: `bedrock` or `java` |
 | `--watch` | off | Watch input file and re-convert on change |
 
 **Examples:**

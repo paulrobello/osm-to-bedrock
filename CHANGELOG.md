@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-12
+
+### Added
+- **Java Edition support** — generate Minecraft Java Edition (1.18+) worlds alongside Bedrock via `--edition java` CLI flag or `edition` HTTP API parameter
+- `--edition <bedrock|java>` flag on `convert`, `fetch-convert`, `overture-convert`, and `terrain-convert` subcommands
+- `edition` field in YAML config file (e.g. `edition: java`)
+- `edition` parameter in server `/convert`, `/fetch-convert`, `/terrain-convert` request bodies
+- `src/world.rs` — `WorldWriter` trait, `Edition` enum, `ChunkData` (shared between editions)
+- `src/anvil.rs` — `JavaWorld` implementing `WorldWriter` with Anvil region file writer (`.mca`)
+- `src/nbt_be.rs` — Big-endian NBT writer for Java Edition, including `TAG_LIST`, `TAG_LONG_ARRAY`, `TAG_INT_ARRAY`, and Java sign entity encoding
+- `Block::java_name()`, `Block::java_block_states()`, `surface_to_java_biome()` for Java Edition block/biome mappings
+- Java Edition download packaging as `.zip` (Bedrock continues to use `.mcworld`)
+- 36 new tests covering Java block mappings, BE NBT writer, JavaWorld, and Anvil region writer
+
+### Changed
+- Pipeline refactored to use `dyn WorldWriter` trait instead of `BedrockWorld` directly
+- `ChunkData`, `MIN_Y`, `MAX_Y` moved from `bedrock.rs` to shared `world.rs` module
+- Streaming pipeline branches on edition: Bedrock uses LevelDB `ChunkWriter`, Java accumulates in memory and calls `save()`
+- `geometry.rs` draw functions accept `&mut dyn WorldWriter`
+- `edition` field added to `ConvertParams` and `TerrainParams`
+- Server produces `.zip` for Java editions, `.mcworld` for Bedrock
+
 ## [0.7.0] — 2026-05-07
 
 ### Added

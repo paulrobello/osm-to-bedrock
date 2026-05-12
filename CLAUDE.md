@@ -26,6 +26,9 @@ cargo test test_name
 # Run with logging
 RUST_LOG=debug cargo run --release -- convert --input map.osm.pbf --output MyWorld/
 
+# Convert for Java Edition
+RUST_LOG=debug cargo run --release -- convert --input map.osm.pbf --output MyWorld/ --edition java
+
 # Convert via make (pass INPUT and OUTPUT)
 make convert INPUT=city.osm.pbf OUTPUT=~/games/minecraft/worlds/MyCity
 
@@ -57,7 +60,7 @@ The Next.js frontend proxies all backend calls through its own API routes (`web/
 - `POST /terrain-convert` — SRTM-only world (no OSM features)
 - `POST /preview` — generate 3D block preview from PBF
 - `GET  /status/{id}` — poll conversion progress
-- `GET  /download/{id}` — download `.mcworld` file
+- `GET  /download/{id}` — download `.mcworld` (Bedrock) or `.zip` (Java) file
 - `GET  /cache/areas` — list cached Overpass bbox entries
 
 **Next.js proxy routes** (`web/src/app/api/`): `upload/`, `convert/`, `fetch-convert/`, `status/[id]/`, `download/`, `geocode/`, `overpass/`, `cache/`
@@ -66,14 +69,17 @@ Key web components: `MapView` (OpenLayers map), `ExportPanel` (conversion contro
 
 ## Architecture
 
-This is a Rust CLI that converts OpenStreetMap `.osm.pbf` files into playable Minecraft Bedrock Edition worlds. The pipeline is a single-pass-with-context design:
+This is a Rust CLI that converts OpenStreetMap `.osm.pbf` files into playable Minecraft Bedrock or Java Edition worlds. The pipeline is a single-pass-with-context design, targeting either edition via `--edition bedrock|java`:
 
 1. **Parse** (`osm.rs`) — `parse_pbf()` reads all nodes and ways into `OsmData` (HashMap of nodes + Vec of ways). Relations are skipped.
 2. **Convert** (`convert.rs`) — `CoordConverter` maps lat/lon → block (x, z) using equirectangular approximation. Bresenham line rasterization and scanline polygon fill handle geometry.
-3. **Map blocks** (`blocks.rs`) — OSM tags (`highway=*`, `building`, `landuse=*`, `natural=*`, `waterway=*`) are mapped to a `Block` enum (44 variants). Roads use `RoadStyle` structs with variable width, sidewalks, and centre-line; waterways use `waterway_to_style()` with per-type depth/width defaults.
+3. **Map blocks** (`blocks.rs`) — OSM tags (`highway=*`, `building`, `landuse=*`, `natural=*`, `waterway=*`) are mapped to a `Block` enum (56 variants). Roads use `RoadStyle` structs with variable width, sidewalks, and centre-line; waterways use `waterway_to_style()` with per-type depth/width defaults.
 4. **Build world** (`main.rs`) — Three-pass loop: (1) collect affected chunks, (2) fill terrain layers (bedrock→stone→dirt→grass), (3) overlay OSM features. Buildings get floor + ceiling + perimeter walls. Optional `--signs` flag places street name signs along named roads.
-5. **Write** (`bedrock.rs`) — `BedrockWorld` accumulates `ChunkData` in memory, then writes a LevelDB database with SubChunk v8 format (packed block indices + NBT palette) plus `level.dat`.
-6. **NBT** (`nbt.rs`) — Minimal little-endian NBT writer (Bedrock uses LE, not BE like Java). Includes `encode_sign_block_entity()` using modern `FrontText`/`BackText` sub-compounds (Bedrock 1.20+).
+5. **Write** — Edition-specific world writer via `WorldWriter` trait:
+   - **Bedrock** (`bedrock.rs`) — `BedrockWorld` accumulates `ChunkData` in memory, then writes a LevelDB database with SubChunk v8 format plus `level.dat`.
+   - **Java** (`anvil.rs`) — `JavaWorld` accumulates `ChunkData` in memory, then writes Anvil region files (`.mca`) with big-endian chunk NBT plus gzip-compressed `level.dat`.
+6. **Shared types** (`world.rs`) — `WorldWriter` trait, `Edition` enum, `ChunkData` (in-memory block grid shared by both backends).
+7. **NBT** — Two writers: `nbt.rs` (little-endian for Bedrock) and `nbt_be.rs` (big-endian for Java, with `TAG_LIST`/`TAG_LONG_ARRAY` support).
 7. **GeoJSON export** (`geojson_export.rs`) — Converts `OsmData` to GeoJSON `FeatureCollection` for the web frontend. Classifies ways as road/building/water/landuse/railway/other.
 8. **HTTP server** (`server.rs`) — Axum-based API with multipart upload, background conversion jobs (tracked via `Arc<Mutex<HashMap>>`), and `.mcworld` ZIP download.
 9. **Overpass** (`overpass.rs`) — Builds QL queries, fetches from Overpass API, writes results to disk cache. `default_overpass_url()` resolves `OVERPASS_URL` env var → hardcoded default.

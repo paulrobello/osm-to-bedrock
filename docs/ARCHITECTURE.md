@@ -1,6 +1,6 @@
 # Architecture
 
-High-level architecture and design of the osm-to-bedrock project, a Rust CLI and web application that converts OpenStreetMap `.osm.pbf` files into playable Minecraft Bedrock Edition worlds backed by LevelDB.
+High-level architecture and design of the osm-to-bedrock project, a Rust CLI and web application that converts OpenStreetMap `.osm.pbf` files into playable Minecraft Bedrock Edition or Java Edition worlds.
 
 ## Table of Contents
 
@@ -20,7 +20,7 @@ High-level architecture and design of the osm-to-bedrock project, a Rust CLI and
 
 ## Overview
 
-osm-to-bedrock reads real-world geographic data from OpenStreetMap and produces a Minecraft Bedrock Edition world that you can open on mobile, console, or Windows 10/11. The core conversion pipeline:
+osm-to-bedrock reads real-world geographic data from OpenStreetMap and produces a Minecraft world that you can open on mobile, console, Windows 10/11 (Bedrock Edition), or desktop (Java Edition 1.18+). The core conversion pipeline:
 
 1. Parses `.osm.pbf` files (or fetches data from the Overpass API)
 2. Projects geographic coordinates onto a Minecraft block grid
@@ -36,9 +36,9 @@ The project ships as both a CLI binary (six subcommands) and an Axum-based HTTP 
 The conversion pipeline has two variants depending on the caller:
 
 - **Streaming (tile-based)** — used by the CLI `convert` subcommand and the server's `/convert`, `/fetch-convert`, and `/terrain-convert` endpoints. Processes the world in fixed-size tiles to bound memory usage.
-- **In-memory** — used by the server's `/preview` endpoint. Accumulates all chunks in a single `BedrockWorld` for fast 3D preview generation.
+- **In-memory** — used by the server's `/preview` endpoint. Accumulates all chunks in a single `Box<dyn WorldWriter>` for fast 3D preview generation.
 
-Both variants share the same `render_osm_features` function to avoid code duplication. The only difference is how chunks are flushed: streaming drains each tile to LevelDB before allocating the next; in-memory keeps everything in a single world object.
+Both variants share the same `render_osm_features` function to avoid code duplication. The pipeline is edition-agnostic: it targets the `WorldWriter` trait, with `BedrockWorld` (LevelDB) and `JavaWorld` (Anvil region files) as concrete backends selected via the `--edition` flag.
 
 ```mermaid
 graph LR
@@ -78,6 +78,7 @@ The library crate (`src/lib.rs`) exposes the following public modules, grouped h
 | **Pipeline** | `pipeline` | Orchestrates the full conversion flow (streaming and in-memory variants) |
 | **Pipeline** | `params` | `ConvertParams` and `TerrainParams` structs shared by CLI and server |
 | **Pipeline** | `filter` | `FeatureFilter` — boolean toggles for roads, buildings, water, land use, railways |
+| **Pipeline** | `world` | `WorldWriter` trait, `Edition` enum, `ChunkData` — shared abstraction over Bedrock and Java backends |
 | **Data Sources** | `osm` | Parses `.osm.pbf` and `.osm` XML files into `OsmData` (nodes HashMap + ways Vec) |
 | **Data Sources** | `overpass` | Builds Overpass QL queries, fetches from API, writes to disk cache |
 | **Data Sources** | `osm_cache` | Disk cache at `~/.cache/osm-to-bedrock/overpass/`; SHA-256 keyed, supports containment lookups |
@@ -88,9 +89,11 @@ The library crate (`src/lib.rs`) exposes the following public modules, grouped h
 | **Geometry** | `geometry` | High-level drawing: `draw_road`, `draw_building`, `draw_bridge`, `draw_tunnel`, `draw_waterway`, `draw_roof` |
 | **Geometry** | `spatial` | `SpatialIndex` (type-bucketed + grid-indexed way lookup), `HeightMap`, `TILE_CHUNKS` constant |
 | **Geometry** | `sign` | Street-name sign formatting, nearest-road vector calculation, sign direction |
-| **World Writer** | `bedrock` | `BedrockWorld`, `ChunkData`, `ChunkWriter` — LevelDB database with SubChunk v8 encoding and `level.dat` |
+| **World Writer** | `bedrock` | `BedrockWorld`, `ChunkWriter` — LevelDB database with SubChunk v8 encoding and `level.dat` |
+| **World Writer** | `anvil` | `JavaWorld` — Anvil region file writer (`.mca`), Java `level.dat`, session.lock |
 | **World Writer** | `blocks` | `Block` enum (60+ variants), OSM tag-to-block mapping, `RoadStyle`, `WaterwayStyle` |
 | **World Writer** | `nbt` | Minimal little-endian NBT writer (Bedrock uses LE, not BE like Java) |
+| **World Writer** | `nbt_be` | Big-endian NBT writer for Java Edition (TAG_LIST, TAG_LONG_ARRAY, etc.) |
 | **Server** | `server` | Axum HTTP API — multipart upload, background job tracking, `.mcworld` download |
 | **Server** | `geojson_export` | Converts `OsmData` to GeoJSON `FeatureCollection` for the web frontend |
 | **Metadata** | `metadata` | `WorldMetadata` — records conversion parameters, timing, and source info as `world_info.json` |
@@ -105,7 +108,7 @@ graph TD
     Pipeline[Pipeline - pipeline / params / filter]
     DataSources[Data Sources - osm / overpass / osm_cache / elevation / srtm / overture]
     Geometry[Geometry - convert / geometry / spatial / sign]
-    WorldWriter[World Writer - bedrock / blocks / nbt]
+    WorldWriter[World Writer - world / bedrock / anvil / blocks / nbt / nbt_be]
     GeoJSON[GeoJSON Export - geojson_export]
     Metadata[Metadata - metadata / config]
 
@@ -172,9 +175,9 @@ sequenceDiagram
     participant Overpass as Overpass API
     participant Conv as CoordConverter
     participant Render as render_osm_features
-    participant BW as BedrockWorld / ChunkWriter
-    participant LDB as LevelDB
-    participant ZIP as .mcworld ZIP
+    participant BW as BedrockWorld / JavaWorld
+    participant LDB as LevelDB / Anvil .mca
+    participant ZIP as .mcworld / .zip
 
     User->>Server: Upload PBF or provide bbox
     alt PBF upload
@@ -243,6 +246,10 @@ The `SpatialIndex` in `src/spatial.rs` accelerates per-tile queries. Ways are bu
 
 ## World Format Summary
 
+The pipeline supports two output formats, selected via `--edition`:
+
+### Bedrock Edition
+
 The Bedrock world format centers on a LevelDB database and a `level.dat` header file.
 
 **SubChunk v8 encoding:**
@@ -258,6 +265,25 @@ The Bedrock world format centers on a LevelDB database and a `level.dat` header 
 **level.dat**: Written with an 8-byte header (magic + length) followed by a root NBT compound containing world name, game type, spawn position, and other settings.
 
 > **See** [MINECRAFT_BEDROCK_MAP_FORMAT.md](MINECRAFT_BEDROCK_MAP_FORMAT.md) for the full specification of chunk keys, SubChunk encoding, and LevelDB compressor IDs.
+
+### Java Edition
+
+The Java world format uses Anvil region files (`.mca`) and a gzip-compressed `level.dat`.
+
+**Region file layout** (`region/r.X.Z.mca`):
+- 8KB header: 4KB location table (3-byte sector offset + 1-byte count per chunk) + 4KB timestamp table
+- Per-chunk: 4-byte BE length + 1-byte compression type (0x02 = zlib) + zlib-compressed big-endian NBT
+- Each file covers 32×32 chunks
+
+**Chunk NBT** (1.18+ data-driven format):
+- `DataVersion`: 3465 (1.21.x)
+- `sections`: list of 16×16×16 sections, each with `block_states` (palette + packed long array) and `biomes` (string palette)
+- Block state packing: indices packed into 64-bit longs, max(4, ceil(log2(palette_size))) bits per entry
+- Biomes: string IDs (e.g. `minecraft:plains`) in a simplified per-section palette
+
+**NBT**: Java uses big-endian NBT. The `nbt_be` module implements the writer with additional tag types (`TAG_LIST`, `TAG_LONG_ARRAY`, `TAG_INT_ARRAY`) needed by the Anvil format.
+
+**level.dat**: gzip-compressed big-endian NBT with `DataVersion`, `Version.Name`, `GameType`, spawn position, and `WorldGenSettings`.
 
 ## Server Architecture
 
