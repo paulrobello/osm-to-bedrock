@@ -42,6 +42,7 @@
 //! }).expect("conversion failed");
 //! ```
 
+pub mod anvil;
 pub mod bedrock;
 pub mod blocks;
 pub mod config;

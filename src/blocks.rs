@@ -143,6 +143,57 @@ impl Block {
         }
     }
 
+    /// Java Edition block identifier string.
+    pub fn java_name(self) -> &'static str {
+        match self {
+            Block::OakSign => "minecraft:oak_sign",
+            Block::Brick => "minecraft:bricks",
+            Block::StoneSlab => "minecraft:stone_slab",
+            Block::Poppy => "minecraft:poppy",
+            Block::TallGrass => "minecraft:tall_grass",
+            Block::Fern => "minecraft:fern",
+            Block::CherrySign => "minecraft:cherry_sign",
+            Block::StoneBrickWall => "minecraft:stone_brick_wall",
+            Block::SnowLayer => "minecraft:snow",
+            // All other blocks share the same name between Bedrock and Java.
+            _ => self.bedrock_name(),
+        }
+    }
+
+    /// Java Edition block state properties as key-value string pairs.
+    pub fn java_block_states(self) -> Vec<(&'static str, &'static str)> {
+        match self {
+            Block::OakSign | Block::CherrySign => vec![("rotation", "0")],
+            Block::TallGrass | Block::Fern | Block::Poppy | Block::Torch => vec![],
+            Block::CobblestoneWall => vec![("up", "true")],
+            Block::StoneBrickWall => vec![("up", "true")],
+            Block::OakSlab
+            | Block::PolishedBlackstoneSlab
+            | Block::SmoothStoneSlab
+            | Block::AndesiteSlab => vec![("type", "bottom")],
+            Block::BirchLog => vec![("axis", "y")],
+            Block::OakLeaves => vec![("persistent", "true")],
+            Block::BirchLeaves => vec![("persistent", "true")],
+            Block::OakStairs | Block::StoneBrickStairs => vec![
+                ("facing", "north"),
+                ("half", "bottom"),
+                ("shape", "straight"),
+            ],
+            Block::Rail => vec![("shape", "north_south")],
+            Block::SnowLayer => vec![("layers", "1")],
+            Block::Dispenser => vec![("facing", "up")],
+            Block::Furnace => vec![("facing", "south")],
+            Block::Barrel => vec![("facing", "up"), ("open", "false")],
+            Block::Bell => vec![("attachment", "floor"), ("facing", "north")],
+            Block::Campfire => vec![("facing", "south"), ("lit", "true")],
+            Block::Bed => vec![("facing", "north"), ("part", "head")],
+            Block::Lantern => vec![("hanging", "false")],
+            Block::HayBale => vec![("axis", "y")],
+            Block::CherryHangingSign => vec![("attached", "false"), ("rotation", "0")],
+            _ => vec![],
+        }
+    }
+
     /// Block states for the palette entry (e.g. sign direction, slab half, etc.).
     pub fn block_states(self) -> Vec<BlockState> {
         match self {
@@ -336,6 +387,20 @@ pub fn surface_to_biome(block: Block) -> u8 {
         Block::Snow | Block::SnowLayer => 12,
         Block::Ice => 24,
         _ => 1, // Default: plains. Covers roads, vegetation, structures, Air, and any future Block variants.
+    }
+}
+
+/// Map a surface block to the nearest Java Edition biome ID string.
+pub fn surface_to_java_biome(block: Block) -> &'static str {
+    match block {
+        Block::Water => "minecraft:river",
+        Block::OakLog | Block::OakLeaves => "minecraft:forest",
+        Block::BirchLog | Block::BirchLeaves => "minecraft:birch_forest",
+        Block::Sand => "minecraft:beach",
+        Block::Stone => "minecraft:windswept_hills",
+        Block::Snow | Block::SnowLayer => "minecraft:snowy_plains",
+        Block::Ice => "minecraft:frozen_river",
+        _ => "minecraft:plains",
     }
 }
 
@@ -570,5 +635,173 @@ mod tests {
         tags.insert("depth".to_string(), "4.0".to_string()); // 4m at scale 2.0 → 2 blocks deep
         let style = waterway_to_style("stream", &tags, 2.0);
         assert_eq!(style.depth, 2);
+    }
+
+    // ── java_name tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn java_name_sign() {
+        assert_eq!(Block::OakSign.java_name(), "minecraft:oak_sign");
+        assert_eq!(Block::CherrySign.java_name(), "minecraft:cherry_sign");
+    }
+
+    #[test]
+    fn java_name_brick() {
+        assert_eq!(Block::Brick.java_name(), "minecraft:bricks");
+    }
+
+    #[test]
+    fn java_name_poppy() {
+        assert_eq!(Block::Poppy.java_name(), "minecraft:poppy");
+    }
+
+    #[test]
+    fn java_name_stone_slab() {
+        assert_eq!(Block::StoneSlab.java_name(), "minecraft:stone_slab");
+    }
+
+    #[test]
+    fn java_name_tallgrass() {
+        assert_eq!(Block::TallGrass.java_name(), "minecraft:tall_grass");
+    }
+
+    #[test]
+    fn java_name_fern() {
+        assert_eq!(Block::Fern.java_name(), "minecraft:fern");
+    }
+
+    #[test]
+    fn java_name_stone_brick_wall() {
+        assert_eq!(
+            Block::StoneBrickWall.java_name(),
+            "minecraft:stone_brick_wall"
+        );
+    }
+
+    #[test]
+    fn java_name_shared_blocks_unchanged() {
+        // Blocks that share the same name between Bedrock and Java
+        assert_eq!(Block::Stone.java_name(), "minecraft:stone");
+        assert_eq!(Block::Bedrock.java_name(), "minecraft:bedrock");
+        assert_eq!(Block::Water.java_name(), "minecraft:water");
+        assert_eq!(Block::OakLog.java_name(), "minecraft:oak_log");
+        assert_eq!(Block::OakLeaves.java_name(), "minecraft:oak_leaves");
+        assert_eq!(Block::Cobblestone.java_name(), "minecraft:cobblestone");
+        assert_eq!(Block::Snow.java_name(), "minecraft:snow");
+        assert_eq!(Block::Ice.java_name(), "minecraft:ice");
+    }
+
+    // ── java_block_states tests ─────────────────────────────────────────────
+
+    #[test]
+    fn java_block_states_sign_has_rotation() {
+        let states = Block::OakSign.java_block_states();
+        assert_eq!(states, vec![("rotation", "0")]);
+
+        let cherry_states = Block::CherrySign.java_block_states();
+        assert_eq!(cherry_states, vec![("rotation", "0")]);
+    }
+
+    #[test]
+    fn java_block_states_slab_has_half() {
+        let states = Block::OakSlab.java_block_states();
+        assert_eq!(states, vec![("type", "bottom")]);
+
+        let bs_states = Block::PolishedBlackstoneSlab.java_block_states();
+        assert_eq!(bs_states, vec![("type", "bottom")]);
+
+        let smooth_states = Block::SmoothStoneSlab.java_block_states();
+        assert_eq!(smooth_states, vec![("type", "bottom")]);
+
+        let andesite_states = Block::AndesiteSlab.java_block_states();
+        assert_eq!(andesite_states, vec![("type", "bottom")]);
+    }
+
+    #[test]
+    fn java_block_states_stairs_has_facing() {
+        let states = Block::OakStairs.java_block_states();
+        assert_eq!(
+            states,
+            vec![
+                ("facing", "north"),
+                ("half", "bottom"),
+                ("shape", "straight"),
+            ]
+        );
+
+        let sb_states = Block::StoneBrickStairs.java_block_states();
+        assert_eq!(
+            sb_states,
+            vec![
+                ("facing", "north"),
+                ("half", "bottom"),
+                ("shape", "straight"),
+            ]
+        );
+    }
+
+    #[test]
+    fn java_block_states_poppy_has_no_states() {
+        assert_eq!(Block::Poppy.java_block_states(), vec![]);
+    }
+
+    #[test]
+    fn java_block_states_log_has_axis() {
+        assert_eq!(Block::BirchLog.java_block_states(), vec![("axis", "y")]);
+    }
+
+    // ── surface_to_java_biome tests ─────────────────────────────────────────
+
+    #[test]
+    fn java_biome_water() {
+        assert_eq!(surface_to_java_biome(Block::Water), "minecraft:river");
+    }
+
+    #[test]
+    fn java_biome_forest() {
+        assert_eq!(surface_to_java_biome(Block::OakLog), "minecraft:forest");
+        assert_eq!(surface_to_java_biome(Block::OakLeaves), "minecraft:forest");
+    }
+
+    #[test]
+    fn java_biome_birch() {
+        assert_eq!(
+            surface_to_java_biome(Block::BirchLog),
+            "minecraft:birch_forest"
+        );
+        assert_eq!(
+            surface_to_java_biome(Block::BirchLeaves),
+            "minecraft:birch_forest"
+        );
+    }
+
+    #[test]
+    fn java_biome_beach() {
+        assert_eq!(surface_to_java_biome(Block::Sand), "minecraft:beach");
+    }
+
+    #[test]
+    fn java_biome_mountains() {
+        assert_eq!(
+            surface_to_java_biome(Block::Stone),
+            "minecraft:windswept_hills"
+        );
+    }
+
+    #[test]
+    fn java_biome_snow() {
+        assert_eq!(surface_to_java_biome(Block::Snow), "minecraft:snowy_plains");
+        assert_eq!(
+            surface_to_java_biome(Block::SnowLayer),
+            "minecraft:snowy_plains"
+        );
+    }
+
+    #[test]
+    fn java_biome_plains_default() {
+        assert_eq!(surface_to_java_biome(Block::GrassBlock), "minecraft:plains");
+        assert_eq!(surface_to_java_biome(Block::Dirt), "minecraft:plains");
+        assert_eq!(surface_to_java_biome(Block::Concrete), "minecraft:plains");
+        assert_eq!(surface_to_java_biome(Block::StoneBrick), "minecraft:plains");
     }
 }

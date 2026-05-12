@@ -160,24 +160,13 @@ pub trait WorldWriter {
 
 // ── Edition factory methods ──────────────────────────────────────────────
 
-#[allow(unexpected_cfgs)]
 impl Edition {
     /// Create an unbounded world for this edition.
     #[allow(dead_code)]
     pub fn create_world(&self, output: &Path) -> Box<dyn WorldWriter> {
         match self {
             Edition::Bedrock => Box::new(crate::bedrock::BedrockWorld::new(output)),
-            Edition::Java => {
-                #[cfg(feature = "java")]
-                {
-                    Box::new(crate::anvil::JavaWorld::new(output))
-                }
-                #[cfg(not(feature = "java"))]
-                {
-                    let _ = output;
-                    panic!("Java Edition support requires the 'java' feature")
-                }
-            }
+            Edition::Java => Box::new(crate::anvil::JavaWorld::new(output)),
         }
     }
 
@@ -195,19 +184,9 @@ impl Edition {
             Edition::Bedrock => Box::new(crate::bedrock::BedrockWorld::new_bounded(
                 output, min_cx, max_cx, min_cz, max_cz,
             )),
-            Edition::Java => {
-                #[cfg(feature = "java")]
-                {
-                    Box::new(crate::anvil::JavaWorld::new_bounded(
-                        output, min_cx, max_cx, min_cz, max_cz,
-                    ))
-                }
-                #[cfg(not(feature = "java"))]
-                {
-                    let _ = (output, min_cx, max_cx, min_cz, max_cz);
-                    panic!("Java Edition support requires the 'java' feature")
-                }
-            }
+            Edition::Java => Box::new(crate::anvil::JavaWorld::new_bounded(
+                output, min_cx, max_cx, min_cz, max_cz,
+            )),
         }
     }
 }
