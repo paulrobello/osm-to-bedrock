@@ -219,6 +219,7 @@ mod tests {
         let params = ConvertParams {
             input: None,
             output: std::path::PathBuf::from("/tmp/test"),
+            edition: Default::default(),
             scale: 2.0,
             sea_level: 62,
             building_height: 10,
@@ -286,6 +287,7 @@ mod tests {
         let params = ConvertParams {
             input: None,
             output: dir.path().to_path_buf(),
+            edition: Default::default(),
             scale: 1.0,
             sea_level: 65,
             building_height: 8,

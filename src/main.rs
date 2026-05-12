@@ -579,6 +579,7 @@ fn main() -> Result<()> {
             let terrain_params = TerrainParams {
                 bbox,
                 output,
+                edition: Default::default(),
                 scale: args.scale.or(config.scale).unwrap_or(1.0),
                 sea_level: args.sea_level.or(config.sea_level).unwrap_or(65),
                 vertical_scale: args.vertical_scale.or(config.vertical_scale).unwrap_or(1.0),
@@ -683,6 +684,7 @@ fn main() -> Result<()> {
             let convert_params = ConvertParams {
                 input: None,
                 output,
+                edition: Default::default(),
                 scale: args.scale.or(config.scale).unwrap_or(1.0),
                 sea_level: args.sea_level.or(config.sea_level).unwrap_or(65),
                 building_height: args.building_height.or(config.building_height).unwrap_or(8),
@@ -739,6 +741,7 @@ fn main() -> Result<()> {
             let convert_params = ConvertParams {
                 input: None,
                 output,
+                edition: Default::default(),
                 scale: args.scale.or(config.scale).unwrap_or(1.0),
                 sea_level: args.sea_level.or(config.sea_level).unwrap_or(65),
                 building_height: args.building_height.or(config.building_height).unwrap_or(8),
@@ -918,6 +921,7 @@ fn run_convert(args: &ConvertArgs, config: &Config) -> Result<()> {
     let convert_params = ConvertParams {
         input: Some(args.input.clone()),
         output: args.output.clone(),
+        edition: Default::default(),
         scale: args.scale.or(config.scale).unwrap_or(1.0),
         sea_level: args.sea_level.or(config.sea_level).unwrap_or(65),
         building_height: args.building_height.or(config.building_height).unwrap_or(8),
@@ -1117,6 +1121,7 @@ mod tests {
         let convert_params = ConvertParams {
             input: None,
             output: tmp.path().to_path_buf(),
+            edition: Default::default(),
             scale: 1.0,
             sea_level: 65,
             building_height: 8,

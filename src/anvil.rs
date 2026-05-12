@@ -172,6 +172,26 @@ impl WorldWriter for JavaWorld {
         self.chunks.keys().copied().collect()
     }
 
+    fn surface_blocks(&self) -> Vec<(i32, i32, i32, String)> {
+        let mut result = Vec::new();
+        for (&(cx, cz), chunk) in &self.chunks {
+            for lx in 0..16i32 {
+                for lz in 0..16i32 {
+                    let wx = cx * 16 + lx;
+                    let wz = cz * 16 + lz;
+                    for y in (MIN_Y..=MAX_Y).rev() {
+                        let b = chunk.get(lx, y, lz);
+                        if b != Block::Air {
+                            result.push((wx, wz, y, format!("{:?}", b)));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
     fn save(&self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
         JavaWorld::save(self, spawn_x, spawn_y, spawn_z)
     }

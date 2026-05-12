@@ -592,6 +592,9 @@ impl crate::world::WorldWriter for BedrockWorld {
     fn occupied_chunks(&self) -> Vec<(i32, i32)> {
         BedrockWorld::occupied_chunks(self)
     }
+    fn surface_blocks(&self) -> Vec<(i32, i32, i32, String)> {
+        BedrockWorld::surface_blocks(self)
+    }
     fn save(&self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
         BedrockWorld::save(self, spawn_x, spawn_y, spawn_z)
     }

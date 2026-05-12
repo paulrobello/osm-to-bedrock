@@ -154,6 +154,10 @@ pub trait WorldWriter {
     /// Return all occupied chunk coordinates.
     fn occupied_chunks(&self) -> Vec<(i32, i32)>;
 
+    /// Extract the top-most non-Air block at each (x, z) column.
+    /// Returns `Vec<(world_x, world_z, y, block_name)>`.
+    fn surface_blocks(&self) -> Vec<(i32, i32, i32, String)>;
+
     /// Write the world to disk with spawn at the given block coordinates.
     fn save(&self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()>;
 }

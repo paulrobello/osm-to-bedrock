@@ -919,6 +919,7 @@ async fn convert_handler(
         let params = ConvertParams {
             input: Some(tmp_path.to_path_buf()),
             output: world_dir.clone(),
+            edition: Default::default(),
             scale: options.scale,
             sea_level: options.sea_level,
             building_height: options.building_height,
@@ -1146,6 +1147,7 @@ async fn preview_handler(mut multipart: Multipart) -> Result<impl IntoResponse, 
         let params = ConvertParams {
             input: Some(tmp_path.to_path_buf()),
             output: world_dir,
+            edition: Default::default(),
             scale: options.scale,
             sea_level: options.sea_level,
             building_height: options.building_height,
@@ -1265,6 +1267,7 @@ async fn fetch_block_preview_handler(
         let params = ConvertParams {
             input: None,
             output: world_dir,
+            edition: Default::default(),
             scale: 1.0,
             sea_level: 65,
             building_height: 8,
@@ -1476,6 +1479,7 @@ async fn fetch_convert_handler(
         let params = ConvertParams {
             input: None,
             output: world_dir.clone(),
+            edition: Default::default(),
             scale: options.scale,
             sea_level: options.sea_level,
             building_height: options.building_height,
@@ -1647,6 +1651,7 @@ async fn terrain_convert_handler(
         let params = TerrainParams {
             bbox,
             output: world_dir.clone(),
+            edition: Default::default(),
             scale: options.scale,
             sea_level: options.sea_level,
             vertical_scale: options.vertical_scale,
@@ -1820,6 +1825,7 @@ async fn overture_convert_handler(
         let params = ConvertParams {
             input: None,
             output: world_dir.clone(),
+            edition: Default::default(),
             scale: options.scale,
             sea_level: options.sea_level,
             building_height: options.building_height,
