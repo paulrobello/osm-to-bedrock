@@ -1,12 +1,12 @@
 //! Geometry helpers for rendering OSM features as Minecraft blocks.
 //!
-//! All `draw_*` functions write blocks into a [`bedrock::BedrockWorld`] or
-//! a tile-bounded variant.  They accept a `get_surface: F` closure so they
-//! can query terrain height at arbitrary positions.
+//! All `draw_*` functions write blocks into a [`WorldWriter`] trait object.
+//! They accept a `get_surface: F` closure so they can query terrain height
+//! at arbitrary positions.
 
-use crate::bedrock;
 use crate::blocks::{self, Block};
 use crate::convert::rasterize_line;
+use crate::world::WorldWriter;
 use std::collections::HashMap;
 
 // ── Bridge / tunnel geometry constants ────────────────────────────────────────
@@ -75,7 +75,7 @@ pub fn bridge_y_offsets(total: usize, height: i32, slope_len: usize) -> Vec<i32>
 /// center-line point is `terrain_y + y_offset` where `y_offset` comes from
 /// `bridge_y_offsets`.
 pub fn draw_bridge<F>(
-    world: &mut bedrock::BedrockWorld,
+    world: &mut dyn WorldWriter,
     pts: &[(i32, i32)],
     get_surface: F,
     style: &blocks::RoadStyle,
@@ -185,7 +185,7 @@ pub fn draw_bridge<F>(
 /// (`tunnel_y`) at each center-line point is `terrain_y - y_offset` where
 /// `y_offset` comes from `bridge_y_offsets` (same ramp shape, sign negated).
 pub fn draw_tunnel<F>(
-    world: &mut bedrock::BedrockWorld,
+    world: &mut dyn WorldWriter,
     pts: &[(i32, i32)],
     get_surface: F,
     style: &blocks::RoadStyle,
@@ -351,7 +351,7 @@ pub fn draw_tunnel<F>(
 /// `get_surface` returns the ground Y for a given (block_x, block_z), allowing
 /// roads to follow real terrain when elevation data is available.
 pub fn draw_road<F>(
-    world: &mut bedrock::BedrockWorld,
+    world: &mut dyn WorldWriter,
     pts: &[(i32, i32)],
     get_surface: F,
     style: &blocks::RoadStyle,
@@ -455,7 +455,7 @@ pub fn draw_road<F>(
 /// Draw building walls (perimeter + solid floor/ceiling) with material variety,
 /// interior floors, windows, and door openings.
 pub fn draw_building(
-    world: &mut bedrock::BedrockWorld,
+    world: &mut dyn WorldWriter,
     pts: &[(i32, i32)],
     surface: i32,
     height: i32,
@@ -602,7 +602,7 @@ pub fn draw_building(
 
 /// Draw a roof on top of a building.
 pub fn draw_roof(
-    world: &mut bedrock::BedrockWorld,
+    world: &mut dyn WorldWriter,
     pts: &[(i32, i32)],
     surface: i32,
     height: i32,
@@ -756,7 +756,7 @@ pub fn draw_roof(
 /// `get_surface` returns the ground Y for a given (block_x, block_z), allowing
 /// waterways to cut into real terrain when elevation data is available.
 pub fn draw_waterway<F>(
-    world: &mut bedrock::BedrockWorld,
+    world: &mut dyn WorldWriter,
     pts: &[(i32, i32)],
     get_surface: F,
     style: &blocks::WaterwayStyle,
@@ -812,6 +812,7 @@ pub fn draw_waterway<F>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bedrock;
     use crate::blocks::WaterwayStyle;
     use std::path::Path;
 

@@ -1,4 +1,4 @@
-//! OSM-to-Bedrock conversion pipeline.
+//! OSM-to-Minecraft conversion pipeline.
 //!
 //! ## Pipeline variants
 //!
@@ -15,8 +15,9 @@
 //! Both the in-memory (`run_pipeline`) and streaming (`run_pipeline_streaming`)
 //! paths call [`render_osm_features`] to avoid code duplication.  The only
 //! difference between the two is how chunks are flushed: the streaming path
-//! drains each tile to LevelDB before allocating the next; the preview path
-//! accumulates everything in a single `BedrockWorld`.
+//! drains each tile to disk (LevelDB for Bedrock, region files for Java)
+//! before allocating the next; the preview path accumulates everything in
+//! a single in-memory world.
 
 use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
@@ -41,13 +42,14 @@ use crate::{
     params::{ConvertParams, TerrainParams},
     sign::{format_poi_sign, format_sign_text, nearest_road_vector, vec_to_sign_dir},
     spatial::{HeightMap, ResolvedRelation, SpatialIndex, TILE_CHUNKS, compute_surface_y},
+    world::{self, ChunkData, Edition, MIN_Y, WorldWriter},
 };
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
 
 /// Return type of [`fill_terrain_chunk`]: chunk coords, chunk data, and
 /// a list of surface heights for each (bx, bz) column within the chunk.
-type TerrainChunkResult = ((i32, i32), bedrock::ChunkData, Vec<((i32, i32), i32)>);
+type TerrainChunkResult = ((i32, i32), ChunkData, Vec<((i32, i32), i32)>);
 
 // ── Helpers shared within this module ─────────────────────────────────────────
 
@@ -252,11 +254,7 @@ pub struct TileWays<'a> {
 /// in-memory preview pipeline and the tile-based streaming pipeline.
 /// Each layer is guarded by the corresponding `params.filter.*` flag.
 #[allow(clippy::too_many_arguments)]
-pub fn render_osm_features(
-    world: &mut bedrock::BedrockWorld,
-    ctx: &RenderContext,
-    tile: &TileWays,
-) {
+pub fn render_osm_features(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &TileWays) {
     let params = ctx.params;
     let height_map = ctx.height_map;
     let resolved_ways = ctx.resolved_ways;
@@ -817,13 +815,7 @@ pub fn render_osm_features(
 }
 
 /// Place a decorative block structure at a POI location.
-fn place_poi_decoration(
-    world: &mut bedrock::BedrockWorld,
-    x: i32,
-    sy: i32,
-    z: i32,
-    poi_type: &str,
-) {
+fn place_poi_decoration(world: &mut dyn WorldWriter, x: i32, sy: i32, z: i32, poi_type: &str) {
     match poi_type {
         // Coffee specifically — brewing stand
         "coffee_shop" => {
@@ -903,7 +895,7 @@ fn place_poi_decoration(
 }
 
 /// Place a tree at an exact position (from individual tree node data).
-fn place_tree(world: &mut bedrock::BedrockWorld, x: i32, z: i32, sy: i32) {
+fn place_tree(world: &mut dyn WorldWriter, x: i32, z: i32, sy: i32) {
     let species = coord_hash(x, z) % 5;
     let (log_block, leaf_block) = match species {
         0..=2 => (Block::OakLog, Block::OakLeaves),
@@ -933,7 +925,7 @@ fn place_tree(world: &mut bedrock::BedrockWorld, x: i32, z: i32, sy: i32) {
 
 /// Place a tree or undergrowth at `(x, sy, z)` if the block is OakLog (forest)
 /// and the coordinate hash selects this position.
-fn maybe_place_tree(world: &mut bedrock::BedrockWorld, x: i32, z: i32, sy: i32, block: Block) {
+fn maybe_place_tree(world: &mut dyn WorldWriter, x: i32, z: i32, sy: i32, block: Block) {
     if block == Block::OakLog && coord_hash(x, z).is_multiple_of(7) {
         let species = coord_hash(x, z) % 5;
         let (log_block, leaf_block) = match species {
@@ -1133,7 +1125,7 @@ fn resolve_spawn(
 pub fn run_conversion_preview(
     params: &ConvertParams,
     progress_cb: &dyn Fn(f32, &str),
-) -> Result<(bedrock::BedrockWorld, i32, i32, i32)> {
+) -> Result<(Box<dyn WorldWriter>, i32, i32, i32)> {
     if params.scale <= 0.0 {
         bail!("scale must be positive");
     }
@@ -1157,7 +1149,7 @@ pub fn run_preview_from_data(
     data: osm::OsmData,
     params: &ConvertParams,
     progress_cb: &dyn Fn(f32, &str),
-) -> Result<(bedrock::BedrockWorld, i32, i32, i32)> {
+) -> Result<(Box<dyn WorldWriter>, i32, i32, i32)> {
     if data.ways.is_empty() {
         bail!("No ways found in OSM data.");
     }
@@ -1426,7 +1418,7 @@ fn run_pipeline(
     data: osm::OsmData,
     params: &ConvertParams,
     progress_cb: &dyn Fn(f32, &str),
-) -> Result<(bedrock::BedrockWorld, i32, i32, i32)> {
+) -> Result<(Box<dyn WorldWriter>, i32, i32, i32)> {
     let (origin_lat, origin_lon) = {
         let (min_lat, min_lon, max_lat, max_lon) = data
             .bounds
@@ -1482,11 +1474,11 @@ fn run_pipeline(
     let mut height_map = HeightMap::new(surface);
     {
         let chunk_coords: Vec<(i32, i32)> = terrain_chunks.iter().copied().collect();
-        type ChunkResult = ((i32, i32), bedrock::ChunkData, Vec<((i32, i32), i32)>);
+        type ChunkResult = ((i32, i32), ChunkData, Vec<((i32, i32), i32)>);
         let filled: Vec<ChunkResult> = chunk_coords
             .par_iter()
             .map(|&(cx, cz)| {
-                let mut chunk = bedrock::ChunkData::new();
+                let mut chunk = ChunkData::new();
                 let mut local_heights: Vec<((i32, i32), i32)> = Vec::with_capacity(256);
                 for lx in 0..16i32 {
                     for lz in 0..16i32 {
@@ -1501,7 +1493,7 @@ fn run_pipeline(
                             params.vertical_scale,
                         );
                         local_heights.push(((bx, bz), sy));
-                        let base_y = (sy - thickness).max(bedrock::MIN_Y);
+                        let base_y = (sy - thickness).max(MIN_Y);
                         chunk.set(lx, base_y, lz, Block::Bedrock);
                         for y in (base_y + 1)..(sy - 1).max(base_y + 1) {
                             chunk.set(lx, y, lz, Block::Stone);
@@ -1516,7 +1508,7 @@ fn run_pipeline(
             })
             .collect();
 
-        let mut world = bedrock::BedrockWorld::new(&params.output);
+        let mut world = params.edition.create_world(&params.output);
         for ((cx, cz), chunk, heights) in filled {
             world.insert_chunk(cx, cz, chunk);
             for ((bx, bz), sy) in heights {
@@ -1552,11 +1544,11 @@ fn run_pipeline(
 
     // Rebuild world and re-fill terrain (in one pass this time for the preview path)
     let chunk_coords: Vec<(i32, i32)> = terrain_chunks.iter().copied().collect();
-    type ChunkResult = ((i32, i32), bedrock::ChunkData, Vec<((i32, i32), i32)>);
+    type ChunkResult = ((i32, i32), ChunkData, Vec<((i32, i32), i32)>);
     let filled: Vec<ChunkResult> = chunk_coords
         .par_iter()
         .map(|&(cx, cz)| {
-            let mut chunk = bedrock::ChunkData::new();
+            let mut chunk = ChunkData::new();
             let mut local_heights: Vec<((i32, i32), i32)> = Vec::with_capacity(256);
             for lx in 0..16i32 {
                 for lz in 0..16i32 {
@@ -1571,7 +1563,7 @@ fn run_pipeline(
                         params.vertical_scale,
                     );
                     local_heights.push(((bx, bz), sy));
-                    let base_y = (sy - thickness).max(bedrock::MIN_Y);
+                    let base_y = (sy - thickness).max(MIN_Y);
                     chunk.set(lx, base_y, lz, Block::Bedrock);
                     for y in (base_y + 1)..(sy - 1).max(base_y + 1) {
                         chunk.set(lx, y, lz, Block::Stone);
@@ -1586,7 +1578,7 @@ fn run_pipeline(
         })
         .collect();
 
-    let mut world = bedrock::BedrockWorld::new(&params.output);
+    let mut world = params.edition.create_world(&params.output);
     let mut height_map = HeightMap::new(surface);
     for ((cx, cz), chunk, heights) in filled {
         world.insert_chunk(cx, cz, chunk);
@@ -1618,7 +1610,7 @@ fn run_pipeline(
         relations: &all_relations,
         tile_bounds: None,
     };
-    render_osm_features(&mut world, &ctx, &tile);
+    render_osm_features(&mut *world, &ctx, &tile);
 
     // Compute spawn point
     let (spawn_x, spawn_y, spawn_z) =
@@ -1743,8 +1735,8 @@ fn load_elevation(
 ///
 /// Processes the world in `TILE_CHUNKS × TILE_CHUNKS` chunk tiles so that
 /// only one tile's chunk data lives in memory at a time.  Each tile is
-/// encoded and sent to a background [`bedrock::ChunkWriter`] thread before
-/// the next tile begins, pipelining CPU encoding with LevelDB disk I/O.
+/// encoded and sent to a background writer thread before
+/// the next tile begins, pipelining CPU encoding with disk I/O.
 fn run_pipeline_streaming(
     data: osm::OsmData,
     params: &ConvertParams,
@@ -1855,187 +1847,334 @@ fn run_pipeline_streaming(
         resolve_spawn(params, &conv, &height_map, min_cx, max_cx, min_cz, max_cz);
     log::info!("Spawn point: ({}, {}, {})", spawn_x, spawn_y, spawn_z);
 
-    // Open LevelDB writer
+    // Open writer and process tiles
     std::fs::create_dir_all(&params.output)
         .with_context(|| format!("creating output dir {}", params.output.display()))?;
-    let db_path = params.output.join("db");
-    std::fs::create_dir_all(&db_path)?;
-    let chunk_writer = bedrock::ChunkWriter::open(db_path)?;
 
-    // Pass 3: tile-based terrain + feature rendering
-    progress_cb(0.35, "Converting in tiles");
+    if params.edition == Edition::Bedrock {
+        // Bedrock: stream tiles to LevelDB via ChunkWriter
+        let db_path = params.output.join("db");
+        std::fs::create_dir_all(&db_path)?;
+        let chunk_writer = bedrock::ChunkWriter::open(db_path)?;
 
-    let tile_cx_count = (max_cx - min_cx + TILE_CHUNKS) / TILE_CHUNKS;
-    let tile_cz_count = (max_cz - min_cz + TILE_CHUNKS) / TILE_CHUNKS;
-    let total_tiles = tile_cx_count * tile_cz_count;
-    log::info!(
-        "Processing {total_tiles} tiles ({tile_cx_count}×{tile_cz_count}, each up to {}×{} chunks)",
-        TILE_CHUNKS,
-        TILE_CHUNKS
-    );
+        // Pass 3: tile-based terrain + feature rendering
+        progress_cb(0.35, "Converting in tiles");
 
-    let mut tile_num = 0i32;
-    let mut last_logged_pct = 0;
-    let mut tile_cx0 = min_cx;
-    while tile_cx0 <= max_cx {
-        let tile_cx1 = (tile_cx0 + TILE_CHUNKS - 1).min(max_cx);
-        let mut tile_cz0 = min_cz;
-        while tile_cz0 <= max_cz {
-            let tile_cz1 = (tile_cz0 + TILE_CHUNKS - 1).min(max_cz);
-            tile_num += 1;
+        let tile_cx_count = (max_cx - min_cx + TILE_CHUNKS) / TILE_CHUNKS;
+        let tile_cz_count = (max_cz - min_cz + TILE_CHUNKS) / TILE_CHUNKS;
+        let total_tiles = tile_cx_count * tile_cz_count;
+        log::info!(
+            "Processing {total_tiles} tiles ({tile_cx_count}×{tile_cz_count}, each up to {}×{} chunks)",
+            TILE_CHUNKS,
+            TILE_CHUNKS
+        );
 
-            let tile_progress = 0.35 + 0.50 * (tile_num as f32 / total_tiles as f32);
-            progress_cb(tile_progress, &format!("Tile {tile_num}/{total_tiles}"));
+        let mut tile_num = 0i32;
+        let mut last_logged_pct = 0;
+        let mut tile_cx0 = min_cx;
+        while tile_cx0 <= max_cx {
+            let tile_cx1 = (tile_cx0 + TILE_CHUNKS - 1).min(max_cx);
+            let mut tile_cz0 = min_cz;
+            while tile_cz0 <= max_cz {
+                let tile_cz1 = (tile_cz0 + TILE_CHUNKS - 1).min(max_cz);
+                tile_num += 1;
 
-            // Log at every 10% increment
-            let pct = tile_num * 100 / total_tiles.max(1);
-            if pct / 10 > last_logged_pct / 10 {
-                last_logged_pct = pct;
-                log::info!("Tile progress: {pct}% ({tile_num}/{total_tiles})");
-            }
+                let tile_progress = 0.35 + 0.50 * (tile_num as f32 / total_tiles as f32);
+                progress_cb(tile_progress, &format!("Tile {tile_num}/{total_tiles}"));
 
-            let tile_min_x = tile_cx0 * 16;
-            let tile_max_x = (tile_cx1 + 1) * 16 - 1;
-            let tile_min_z = tile_cz0 * 16;
-            let tile_max_z = (tile_cz1 + 1) * 16 - 1;
+                // Log at every 10% increment
+                let pct = tile_num * 100 / total_tiles.max(1);
+                if pct / 10 > last_logged_pct / 10 {
+                    last_logged_pct = pct;
+                    log::info!("Tile progress: {pct}% ({tile_num}/{total_tiles})");
+                }
 
-            let mut tile_world = bedrock::BedrockWorld::new_bounded(
-                &params.output,
-                tile_cx0,
-                tile_cx1,
-                tile_cz0,
-                tile_cz1,
-            );
+                let tile_min_x = tile_cx0 * 16;
+                let tile_max_x = (tile_cx1 + 1) * 16 - 1;
+                let tile_min_z = tile_cz0 * 16;
+                let tile_max_z = (tile_cz1 + 1) * 16 - 1;
 
-            // Terrain fill (parallel rayon)
-            let tile_chunks: Vec<(i32, i32)> = (tile_cx0..=tile_cx1)
-                .flat_map(|cx| (tile_cz0..=tile_cz1).map(move |cz| (cx, cz)))
-                .collect();
+                let mut tile_world = bedrock::BedrockWorld::new_bounded(
+                    &params.output,
+                    tile_cx0,
+                    tile_cx1,
+                    tile_cz0,
+                    tile_cz1,
+                );
 
-            let filled: Vec<((i32, i32), bedrock::ChunkData)> = tile_chunks
-                .par_iter()
-                .map(|&(cx, cz)| {
-                    let mut chunk = bedrock::ChunkData::new();
-                    for lx in 0..16i32 {
-                        for lz in 0..16i32 {
-                            let bx = cx * 16 + lx;
-                            let bz = cz * 16 + lz;
-                            let sy = height_map.get(bx, bz);
-                            let base_y = (sy - surface_thickness).max(bedrock::MIN_Y);
-                            chunk.set(lx, base_y, lz, Block::Bedrock);
-                            for y in (base_y + 1)..(sy - 1).max(base_y + 1) {
-                                chunk.set(lx, y, lz, Block::Stone);
+                // Terrain fill (parallel rayon)
+                let tile_chunks: Vec<(i32, i32)> = (tile_cx0..=tile_cx1)
+                    .flat_map(|cx| (tile_cz0..=tile_cz1).map(move |cz| (cx, cz)))
+                    .collect();
+
+                let filled: Vec<((i32, i32), ChunkData)> = tile_chunks
+                    .par_iter()
+                    .map(|&(cx, cz)| {
+                        let mut chunk = ChunkData::new();
+                        for lx in 0..16i32 {
+                            for lz in 0..16i32 {
+                                let bx = cx * 16 + lx;
+                                let bz = cz * 16 + lz;
+                                let sy = height_map.get(bx, bz);
+                                let base_y = (sy - surface_thickness).max(MIN_Y);
+                                chunk.set(lx, base_y, lz, Block::Bedrock);
+                                for y in (base_y + 1)..(sy - 1).max(base_y + 1) {
+                                    chunk.set(lx, y, lz, Block::Stone);
+                                }
+                                if sy > base_y + 1 {
+                                    chunk.set(lx, sy - 1, lz, Block::Dirt);
+                                }
+                                chunk.set(lx, sy, lz, Block::GrassBlock);
                             }
-                            if sy > base_y + 1 {
-                                chunk.set(lx, sy - 1, lz, Block::Dirt);
-                            }
-                            chunk.set(lx, sy, lz, Block::GrassBlock);
                         }
-                    }
-                    ((cx, cz), chunk)
-                })
-                .collect();
-
-            for ((cx, cz), chunk) in filled {
-                tile_world.insert_chunk(cx, cz, chunk);
-            }
-
-            // Spatial filter: find way indices intersecting this tile
-            let tile_idx_set: HashSet<usize> = spatial_index
-                .query_rect(tile_min_x, tile_min_z, tile_max_x, tile_max_z)
-                .into_iter()
-                .collect();
-
-            let filter_bucket = |bucket: &Vec<usize>| -> Vec<usize> {
-                bucket
-                    .iter()
-                    .copied()
-                    .filter(|wi| tile_idx_set.contains(wi))
-                    .collect()
-            };
-
-            let tile_landuse = filter_bucket(&spatial_index.landuse);
-            let tile_waterways = filter_bucket(&spatial_index.waterways);
-            let tile_railways = filter_bucket(&spatial_index.railways);
-            let tile_highways = filter_bucket(&spatial_index.highways);
-            let tile_barriers = filter_bucket(&spatial_index.barriers);
-            let tile_buildings = filter_bucket(&spatial_index.buildings);
-            let tile_pois = filter_bucket(&spatial_index.pois);
-            let tile_address = filter_bucket(&spatial_index.address);
-
-            // Filter relations whose outer polygon bounding box overlaps this tile.
-            //
-            // Using bbox overlap (rather than checking whether any vertex lies inside
-            // the tile) ensures that a large relation whose outer ring spans multiple
-            // tiles is included in every tile it visually covers, even when none of its
-            // vertices happen to fall inside a particular tile.
-            let tile_relations: Vec<&ResolvedRelation> = resolved_relations
-                .iter()
-                .filter(|rel| {
-                    rel.outers.iter().any(|outer| {
-                        // Compute the outer ring's axis-aligned bounding box.
-                        let (rel_min_x, rel_max_x, rel_min_z, rel_max_z) = outer.iter().fold(
-                            (i32::MAX, i32::MIN, i32::MAX, i32::MIN),
-                            |(mn_x, mx_x, mn_z, mx_z), &(x, z)| {
-                                (mn_x.min(x), mx_x.max(x), mn_z.min(z), mx_z.max(z))
-                            },
-                        );
-                        // Two axis-aligned boxes overlap iff they overlap on both axes.
-                        rel_min_x <= tile_max_x
-                            && rel_max_x >= tile_min_x
-                            && rel_min_z <= tile_max_z
-                            && rel_max_z >= tile_min_z
+                        ((cx, cz), chunk)
                     })
-                })
-                .collect();
+                    .collect();
 
-            let ctx = RenderContext {
-                resolved_ways: &resolved_ways,
-                resolved_relations: &resolved_relations,
-                data: &data,
-                params,
-                height_map: &height_map,
-                conv: &conv,
-                spatial_index: &spatial_index,
-                surface,
-            };
-            let tile_ways = TileWays {
-                landuse: &tile_landuse,
-                waterways: &tile_waterways,
-                railways: &tile_railways,
-                highways: &tile_highways,
-                barriers: &tile_barriers,
-                buildings: &tile_buildings,
-                pois: &tile_pois,
-                address: &tile_address,
-                relations: &tile_relations,
-                tile_bounds: Some((tile_min_x, tile_min_z, tile_max_x, tile_max_z)),
-            };
-            render_osm_features(&mut tile_world, &ctx, &tile_ways);
+                for ((cx, cz), chunk) in filled {
+                    tile_world.insert_chunk(cx, cz, chunk);
+                }
 
-            // Drain tile chunks → async writer
-            tile_world
-                .drain_chunks_to_writer(&chunk_writer)
-                .with_context(|| {
-                    format!("writing tile ({tile_cx0}..{tile_cx1}, {tile_cz0}..{tile_cz1})")
-                })?;
+                // Spatial filter: find way indices intersecting this tile
+                let tile_idx_set: HashSet<usize> = spatial_index
+                    .query_rect(tile_min_x, tile_min_z, tile_max_x, tile_max_z)
+                    .into_iter()
+                    .collect();
 
-            tile_cz0 += TILE_CHUNKS;
+                let filter_bucket = |bucket: &Vec<usize>| -> Vec<usize> {
+                    bucket
+                        .iter()
+                        .copied()
+                        .filter(|wi| tile_idx_set.contains(wi))
+                        .collect()
+                };
+
+                let tile_landuse = filter_bucket(&spatial_index.landuse);
+                let tile_waterways = filter_bucket(&spatial_index.waterways);
+                let tile_railways = filter_bucket(&spatial_index.railways);
+                let tile_highways = filter_bucket(&spatial_index.highways);
+                let tile_barriers = filter_bucket(&spatial_index.barriers);
+                let tile_buildings = filter_bucket(&spatial_index.buildings);
+                let tile_pois = filter_bucket(&spatial_index.pois);
+                let tile_address = filter_bucket(&spatial_index.address);
+
+                // Filter relations whose outer polygon bounding box overlaps this tile.
+                //
+                // Using bbox overlap (rather than checking whether any vertex lies inside
+                // the tile) ensures that a large relation whose outer ring spans multiple
+                // tiles is included in every tile it visually covers, even when none of its
+                // vertices happen to fall inside a particular tile.
+                let tile_relations: Vec<&ResolvedRelation> = resolved_relations
+                    .iter()
+                    .filter(|rel| {
+                        rel.outers.iter().any(|outer| {
+                            // Compute the outer ring's axis-aligned bounding box.
+                            let (rel_min_x, rel_max_x, rel_min_z, rel_max_z) = outer.iter().fold(
+                                (i32::MAX, i32::MIN, i32::MAX, i32::MIN),
+                                |(mn_x, mx_x, mn_z, mx_z), &(x, z)| {
+                                    (mn_x.min(x), mx_x.max(x), mn_z.min(z), mx_z.max(z))
+                                },
+                            );
+                            // Two axis-aligned boxes overlap iff they overlap on both axes.
+                            rel_min_x <= tile_max_x
+                                && rel_max_x >= tile_min_x
+                                && rel_min_z <= tile_max_z
+                                && rel_max_z >= tile_min_z
+                        })
+                    })
+                    .collect();
+
+                let ctx = RenderContext {
+                    resolved_ways: &resolved_ways,
+                    resolved_relations: &resolved_relations,
+                    data: &data,
+                    params,
+                    height_map: &height_map,
+                    conv: &conv,
+                    spatial_index: &spatial_index,
+                    surface,
+                };
+                let tile_ways = TileWays {
+                    landuse: &tile_landuse,
+                    waterways: &tile_waterways,
+                    railways: &tile_railways,
+                    highways: &tile_highways,
+                    barriers: &tile_barriers,
+                    buildings: &tile_buildings,
+                    pois: &tile_pois,
+                    address: &tile_address,
+                    relations: &tile_relations,
+                    tile_bounds: Some((tile_min_x, tile_min_z, tile_max_x, tile_max_z)),
+                };
+                render_osm_features(&mut tile_world, &ctx, &tile_ways);
+
+                // Drain tile chunks → async LevelDB writer
+                tile_world
+                    .drain_chunks_to_writer(&chunk_writer)
+                    .with_context(|| {
+                        format!("writing tile ({tile_cx0}..{tile_cx1}, {tile_cz0}..{tile_cz1})")
+                    })?;
+
+                tile_cz0 += TILE_CHUNKS;
+            }
+            tile_cx0 += TILE_CHUNKS;
         }
-        tile_cx0 += TILE_CHUNKS;
+
+        // Close the channel; the writer thread drains its queue and joins.
+        progress_cb(0.88, "Flushing LevelDB");
+        chunk_writer.finish()?;
+
+        // Write level.dat
+        progress_cb(0.95, "Writing level.dat");
+        bedrock::BedrockWorld::new(&params.output).write_level_dat(spawn_x, spawn_y, spawn_z)?;
+    } else {
+        // Java edition: accumulate all tiles in memory, then save at the end.
+        progress_cb(0.35, "Converting in tiles");
+
+        let tile_cx_count = (max_cx - min_cx + TILE_CHUNKS) / TILE_CHUNKS;
+        let tile_cz_count = (max_cz - min_cz + TILE_CHUNKS) / TILE_CHUNKS;
+        let total_tiles = tile_cx_count * tile_cz_count;
+        log::info!(
+            "Processing {total_tiles} tiles ({tile_cx_count}×{tile_cz_count}, each up to {}×{} chunks)",
+            TILE_CHUNKS,
+            TILE_CHUNKS
+        );
+
+        let mut world = params.edition.create_world(&params.output);
+
+        let mut tile_num = 0i32;
+        let mut last_logged_pct = 0;
+        let mut tile_cx0 = min_cx;
+        while tile_cx0 <= max_cx {
+            let tile_cx1 = (tile_cx0 + TILE_CHUNKS - 1).min(max_cx);
+            let mut tile_cz0 = min_cz;
+            while tile_cz0 <= max_cz {
+                let tile_cz1 = (tile_cz0 + TILE_CHUNKS - 1).min(max_cz);
+                tile_num += 1;
+
+                let tile_progress = 0.35 + 0.50 * (tile_num as f32 / total_tiles as f32);
+                progress_cb(tile_progress, &format!("Tile {tile_num}/{total_tiles}"));
+
+                let pct = tile_num * 100 / total_tiles.max(1);
+                if pct / 10 > last_logged_pct / 10 {
+                    last_logged_pct = pct;
+                    log::info!("Tile progress: {pct}% ({tile_num}/{total_tiles})");
+                }
+
+                let tile_min_x = tile_cx0 * 16;
+                let tile_max_x = (tile_cx1 + 1) * 16 - 1;
+                let tile_min_z = tile_cz0 * 16;
+                let tile_max_z = (tile_cz1 + 1) * 16 - 1;
+
+                // Terrain fill (parallel rayon)
+                let tile_chunks: Vec<(i32, i32)> = (tile_cx0..=tile_cx1)
+                    .flat_map(|cx| (tile_cz0..=tile_cz1).map(move |cz| (cx, cz)))
+                    .collect();
+
+                let filled: Vec<((i32, i32), ChunkData)> = tile_chunks
+                    .par_iter()
+                    .map(|&(cx, cz)| {
+                        let mut chunk = ChunkData::new();
+                        for lx in 0..16i32 {
+                            for lz in 0..16i32 {
+                                let bx = cx * 16 + lx;
+                                let bz = cz * 16 + lz;
+                                let sy = height_map.get(bx, bz);
+                                let base_y = (sy - surface_thickness).max(MIN_Y);
+                                chunk.set(lx, base_y, lz, Block::Bedrock);
+                                for y in (base_y + 1)..(sy - 1).max(base_y + 1) {
+                                    chunk.set(lx, y, lz, Block::Stone);
+                                }
+                                if sy > base_y + 1 {
+                                    chunk.set(lx, sy - 1, lz, Block::Dirt);
+                                }
+                                chunk.set(lx, sy, lz, Block::GrassBlock);
+                            }
+                        }
+                        ((cx, cz), chunk)
+                    })
+                    .collect();
+
+                for ((cx, cz), chunk) in filled {
+                    world.insert_chunk(cx, cz, chunk);
+                }
+
+                // Spatial filter
+                let tile_idx_set: HashSet<usize> = spatial_index
+                    .query_rect(tile_min_x, tile_min_z, tile_max_x, tile_max_z)
+                    .into_iter()
+                    .collect();
+
+                let filter_bucket = |bucket: &Vec<usize>| -> Vec<usize> {
+                    bucket
+                        .iter()
+                        .copied()
+                        .filter(|wi| tile_idx_set.contains(wi))
+                        .collect()
+                };
+
+                let tile_landuse = filter_bucket(&spatial_index.landuse);
+                let tile_waterways = filter_bucket(&spatial_index.waterways);
+                let tile_railways = filter_bucket(&spatial_index.railways);
+                let tile_highways = filter_bucket(&spatial_index.highways);
+                let tile_barriers = filter_bucket(&spatial_index.barriers);
+                let tile_buildings = filter_bucket(&spatial_index.buildings);
+                let tile_pois = filter_bucket(&spatial_index.pois);
+                let tile_address = filter_bucket(&spatial_index.address);
+
+                let tile_relations: Vec<&ResolvedRelation> = resolved_relations
+                    .iter()
+                    .filter(|rel| {
+                        rel.outers.iter().any(|outer| {
+                            let (rel_min_x, rel_max_x, rel_min_z, rel_max_z) = outer.iter().fold(
+                                (i32::MAX, i32::MIN, i32::MAX, i32::MIN),
+                                |(mn_x, mx_x, mn_z, mx_z), &(x, z)| {
+                                    (mn_x.min(x), mx_x.max(x), mn_z.min(z), mx_z.max(z))
+                                },
+                            );
+                            rel_min_x <= tile_max_x
+                                && rel_max_x >= tile_min_x
+                                && rel_min_z <= tile_max_z
+                                && rel_max_z >= tile_min_z
+                        })
+                    })
+                    .collect();
+
+                let ctx = RenderContext {
+                    resolved_ways: &resolved_ways,
+                    resolved_relations: &resolved_relations,
+                    data: &data,
+                    params,
+                    height_map: &height_map,
+                    conv: &conv,
+                    spatial_index: &spatial_index,
+                    surface,
+                };
+                let tile_ways = TileWays {
+                    landuse: &tile_landuse,
+                    waterways: &tile_waterways,
+                    railways: &tile_railways,
+                    highways: &tile_highways,
+                    barriers: &tile_barriers,
+                    buildings: &tile_buildings,
+                    pois: &tile_pois,
+                    address: &tile_address,
+                    relations: &tile_relations,
+                    tile_bounds: Some((tile_min_x, tile_min_z, tile_max_x, tile_max_z)),
+                };
+                render_osm_features(&mut *world, &ctx, &tile_ways);
+
+                tile_cz0 += TILE_CHUNKS;
+            }
+            tile_cx0 += TILE_CHUNKS;
+        }
+
+        progress_cb(0.88, "Saving world");
+        world.save(spawn_x, spawn_y, spawn_z)?;
     }
 
-    // Close the channel; the writer thread drains its queue and joins.
-    progress_cb(0.88, "Flushing LevelDB");
-    chunk_writer.finish()?;
-
-    // Write level.dat
-    progress_cb(0.95, "Writing level.dat");
-    let tmp_world = bedrock::BedrockWorld::new(&params.output);
-    tmp_world.write_level_dat(spawn_x, spawn_y, spawn_z)?;
-
     progress_cb(0.99, "Streaming conversion complete");
-    log::info!("Streamed {total_tiles} tiles → {}", params.output.display());
+    log::info!("Streamed tiles → {}", params.output.display());
 
     Ok((spawn_x, spawn_y, spawn_z))
 }
@@ -2056,7 +2195,7 @@ fn run_pipeline_streaming(
 pub fn run_terrain_only(
     params: &TerrainParams,
     progress_cb: &dyn Fn(f32, &str),
-) -> Result<(bedrock::BedrockWorld, i32, i32, i32)> {
+) -> Result<(Box<dyn WorldWriter>, i32, i32, i32)> {
     let (min_lat, min_lon, max_lat, max_lon) = params.bbox;
     let origin_lat = (min_lat + max_lat) / 2.0;
     let origin_lon = (min_lon + max_lon) / 2.0;
@@ -2111,7 +2250,7 @@ pub fn run_terrain_only(
     let vertical_scale = params.vertical_scale;
     let surface_thickness = effective_thickness(params.surface_thickness, elevation_data.is_some());
 
-    type ChunkResult = ((i32, i32), bedrock::ChunkData, Vec<((i32, i32), i32)>);
+    type ChunkResult = ((i32, i32), ChunkData, Vec<((i32, i32), i32)>);
     let filled: Vec<ChunkResult> = chunk_coords
         .par_iter()
         .map(|&(cx, cz)| {
@@ -2130,7 +2269,7 @@ pub fn run_terrain_only(
 
     progress_cb(0.85, "Building world");
 
-    let mut world = bedrock::BedrockWorld::new(&params.output);
+    let mut world = params.edition.create_world(&params.output);
     let mut height_map = HeightMap::new(sea);
     for ((cx, cz), chunk, heights) in filled {
         world.insert_chunk(cx, cz, chunk);
@@ -2208,16 +2347,11 @@ pub fn run_terrain_only_to_disk(
 
     std::fs::create_dir_all(&params.output)
         .with_context(|| format!("creating output dir {}", params.output.display()))?;
-    let db_path = params.output.join("db");
-    std::fs::create_dir_all(&db_path)?;
-    let chunk_writer = bedrock::ChunkWriter::open(db_path)?;
 
     let sea = params.sea_level;
     let snow_line = params.snow_line;
     let vertical_scale = params.vertical_scale;
     let surface_thickness = effective_thickness(params.surface_thickness, elevation_data.is_some());
-    let empty_signs: HashMap<(i32, i32, i32), i32> = HashMap::new();
-    let empty_dirs: HashMap<(i32, i32, i32), i32> = HashMap::new();
 
     let mut height_map = HeightMap::new(sea);
 
@@ -2227,85 +2361,172 @@ pub fn run_terrain_only_to_disk(
     let mut tile_idx = 0u64;
     let mut last_logged_pct = 0u64;
 
-    let mut tcx0 = min_cx;
-    while tcx0 <= max_cx {
-        let tcx1 = (tcx0 + TILE_CHUNKS - 1).min(max_cx);
-        let mut tcz0 = min_cz;
-        while tcz0 <= max_cz {
-            let tcz1 = (tcz0 + TILE_CHUNKS - 1).min(max_cz);
+    if params.edition == Edition::Bedrock {
+        // Bedrock: stream tiles to LevelDB via ChunkWriter
+        let db_path = params.output.join("db");
+        std::fs::create_dir_all(&db_path)?;
+        let chunk_writer = bedrock::ChunkWriter::open(db_path)?;
+        let empty_signs: HashMap<(i32, i32, i32), i32> = HashMap::new();
+        let empty_dirs: HashMap<(i32, i32, i32), i32> = HashMap::new();
 
-            let progress = tile_idx as f32 / total_tiles as f32 * 0.90;
-            progress_cb(
-                progress,
-                &format!("Filling terrain tile {}/{total_tiles}", tile_idx + 1),
-            );
+        let mut tcx0 = min_cx;
+        while tcx0 <= max_cx {
+            let tcx1 = (tcx0 + TILE_CHUNKS - 1).min(max_cx);
+            let mut tcz0 = min_cz;
+            while tcz0 <= max_cz {
+                let tcz1 = (tcz0 + TILE_CHUNKS - 1).min(max_cz);
 
-            let pct = tile_idx * 100 / total_tiles.max(1);
-            if pct / 10 > last_logged_pct / 10 {
-                last_logged_pct = pct;
-                log::info!(
-                    "Terrain tile progress: {pct}% ({}/{total_tiles})",
-                    tile_idx + 1
+                let progress = tile_idx as f32 / total_tiles as f32 * 0.90;
+                progress_cb(
+                    progress,
+                    &format!("Filling terrain tile {}/{total_tiles}", tile_idx + 1),
                 );
-            }
 
-            let tile_coords: Vec<(i32, i32)> = (tcx0..=tcx1)
-                .flat_map(|cx| (tcz0..=tcz1).map(move |cz| (cx, cz)))
-                .collect();
-
-            type ChunkResult = ((i32, i32), bedrock::ChunkData, Vec<((i32, i32), i32)>);
-            let filled: Vec<ChunkResult> = tile_coords
-                .par_iter()
-                .map(|&(cx, cz)| {
-                    fill_terrain_chunk(
-                        cx,
-                        cz,
-                        &elevation_data,
-                        &conv,
-                        sea,
-                        snow_line,
-                        vertical_scale,
-                        surface_thickness,
-                    )
-                })
-                .collect();
-
-            for ((cx, cz), ref chunk, heights) in filled {
-                chunk_writer
-                    .write_chunk(cx, cz, chunk, None, &empty_signs, &empty_dirs)
-                    .with_context(|| format!("writing chunk ({cx},{cz})"))?;
-                for ((bx, bz), sy) in heights {
-                    height_map.insert(bx, bz, sy);
+                let pct = tile_idx * 100 / total_tiles.max(1);
+                if pct / 10 > last_logged_pct / 10 {
+                    last_logged_pct = pct;
+                    log::info!(
+                        "Terrain tile progress: {pct}% ({}/{total_tiles})",
+                        tile_idx + 1
+                    );
                 }
+
+                let tile_coords: Vec<(i32, i32)> = (tcx0..=tcx1)
+                    .flat_map(|cx| (tcz0..=tcz1).map(move |cz| (cx, cz)))
+                    .collect();
+
+                type ChunkResult = ((i32, i32), ChunkData, Vec<((i32, i32), i32)>);
+                let filled: Vec<ChunkResult> = tile_coords
+                    .par_iter()
+                    .map(|&(cx, cz)| {
+                        fill_terrain_chunk(
+                            cx,
+                            cz,
+                            &elevation_data,
+                            &conv,
+                            sea,
+                            snow_line,
+                            vertical_scale,
+                            surface_thickness,
+                        )
+                    })
+                    .collect();
+
+                for ((cx, cz), ref chunk, heights) in filled {
+                    chunk_writer
+                        .write_chunk(cx, cz, chunk, None, &empty_signs, &empty_dirs)
+                        .with_context(|| format!("writing chunk ({cx},{cz})"))?;
+                    for ((bx, bz), sy) in heights {
+                        height_map.insert(bx, bz, sy);
+                    }
+                }
+
+                tile_idx += 1;
+                tcz0 += TILE_CHUNKS;
             }
-
-            tile_idx += 1;
-            tcz0 += TILE_CHUNKS;
+            tcx0 += TILE_CHUNKS;
         }
-        tcx0 += TILE_CHUNKS;
-    }
 
-    if params.elevation_smoothing > 0 {
-        height_map.smooth(params.elevation_smoothing);
-    }
+        if params.elevation_smoothing > 0 {
+            height_map.smooth(params.elevation_smoothing);
+        }
 
-    progress_cb(0.92, "Flushing to disk");
-    chunk_writer.finish()?;
+        progress_cb(0.92, "Flushing to disk");
+        chunk_writer.finish()?;
 
-    let (spawn_x, spawn_z) = if let (Some(sx), Some(sz)) = (params.spawn_x, params.spawn_z) {
-        (sx, sz)
-    } else if let (Some(lat), Some(lon)) = (params.spawn_lat, params.spawn_lon) {
-        conv.to_block_xz(lat, lon)
+        let (spawn_x, spawn_z) = if let (Some(sx), Some(sz)) = (params.spawn_x, params.spawn_z) {
+            (sx, sz)
+        } else if let (Some(lat), Some(lon)) = (params.spawn_lat, params.spawn_lon) {
+            conv.to_block_xz(lat, lon)
+        } else {
+            (0, 0)
+        };
+        let spawn_y = params
+            .spawn_y
+            .unwrap_or_else(|| height_map.get(spawn_x, spawn_z) + 1);
+
+        log::info!("Spawn: ({}, {}, {})", spawn_x, spawn_y, spawn_z);
+
+        bedrock::BedrockWorld::new(&params.output).write_level_dat(spawn_x, spawn_y, spawn_z)?;
     } else {
-        (0, 0)
-    };
-    let spawn_y = params
-        .spawn_y
-        .unwrap_or_else(|| height_map.get(spawn_x, spawn_z) + 1);
+        // Java: accumulate in memory, then save
+        let mut world = params.edition.create_world(&params.output);
 
-    log::info!("Spawn: ({}, {}, {})", spawn_x, spawn_y, spawn_z);
+        let mut tcx0 = min_cx;
+        while tcx0 <= max_cx {
+            let tcx1 = (tcx0 + TILE_CHUNKS - 1).min(max_cx);
+            let mut tcz0 = min_cz;
+            while tcz0 <= max_cz {
+                let tcz1 = (tcz0 + TILE_CHUNKS - 1).min(max_cz);
 
-    bedrock::BedrockWorld::new(&params.output).write_level_dat(spawn_x, spawn_y, spawn_z)?;
+                let progress = tile_idx as f32 / total_tiles as f32 * 0.90;
+                progress_cb(
+                    progress,
+                    &format!("Filling terrain tile {}/{total_tiles}", tile_idx + 1),
+                );
+
+                let pct = tile_idx * 100 / total_tiles.max(1);
+                if pct / 10 > last_logged_pct / 10 {
+                    last_logged_pct = pct;
+                    log::info!(
+                        "Terrain tile progress: {pct}% ({}/{total_tiles})",
+                        tile_idx + 1
+                    );
+                }
+
+                let tile_coords: Vec<(i32, i32)> = (tcx0..=tcx1)
+                    .flat_map(|cx| (tcz0..=tcz1).map(move |cz| (cx, cz)))
+                    .collect();
+
+                let filled: Vec<TerrainChunkResult> = tile_coords
+                    .par_iter()
+                    .map(|&(cx, cz)| {
+                        fill_terrain_chunk(
+                            cx,
+                            cz,
+                            &elevation_data,
+                            &conv,
+                            sea,
+                            snow_line,
+                            vertical_scale,
+                            surface_thickness,
+                        )
+                    })
+                    .collect();
+
+                for ((cx, cz), chunk, heights) in filled {
+                    world.insert_chunk(cx, cz, chunk);
+                    for ((bx, bz), sy) in heights {
+                        height_map.insert(bx, bz, sy);
+                    }
+                }
+
+                tile_idx += 1;
+                tcz0 += TILE_CHUNKS;
+            }
+            tcx0 += TILE_CHUNKS;
+        }
+
+        if params.elevation_smoothing > 0 {
+            height_map.smooth(params.elevation_smoothing);
+        }
+
+        let (spawn_x, spawn_z) = if let (Some(sx), Some(sz)) = (params.spawn_x, params.spawn_z) {
+            (sx, sz)
+        } else if let (Some(lat), Some(lon)) = (params.spawn_lat, params.spawn_lon) {
+            conv.to_block_xz(lat, lon)
+        } else {
+            (0, 0)
+        };
+        let spawn_y = params
+            .spawn_y
+            .unwrap_or_else(|| height_map.get(spawn_x, spawn_z) + 1);
+
+        log::info!("Spawn: ({}, {}, {})", spawn_x, spawn_y, spawn_z);
+
+        progress_cb(0.92, "Saving world");
+        world.save(spawn_x, spawn_y, spawn_z)?;
+    }
 
     progress_cb(1.0, "Terrain world complete");
     log::info!(
@@ -2330,7 +2551,7 @@ fn fill_terrain_chunk(
     vertical_scale: f64,
     surface_thickness: i32,
 ) -> TerrainChunkResult {
-    let mut chunk = bedrock::ChunkData::new();
+    let mut chunk = ChunkData::new();
     let mut local_heights: Vec<((i32, i32), i32)> = Vec::with_capacity(256);
     for lx in 0..16i32 {
         for lz in 0..16i32 {
@@ -2339,7 +2560,7 @@ fn fill_terrain_chunk(
             let sy = compute_surface_y(bx, bz, elevation_data, conv, sea, vertical_scale);
 
             if sy <= sea {
-                let base_y = (sy - surface_thickness).max(bedrock::MIN_Y);
+                let base_y = (sy - surface_thickness).max(MIN_Y);
                 chunk.set(lx, base_y, lz, Block::Bedrock);
                 for y in (base_y + 1)..sy {
                     chunk.set(lx, y, lz, Block::Stone);
@@ -2350,7 +2571,7 @@ fn fill_terrain_chunk(
                 }
                 local_heights.push(((bx, bz), sea));
             } else if sy <= sea + 3 {
-                let base_y = (sy - surface_thickness).max(bedrock::MIN_Y);
+                let base_y = (sy - surface_thickness).max(MIN_Y);
                 chunk.set(lx, base_y, lz, Block::Bedrock);
                 for y in (base_y + 1)..(sy - 1).max(base_y + 1) {
                     chunk.set(lx, y, lz, Block::Stone);
@@ -2361,17 +2582,17 @@ fn fill_terrain_chunk(
                 chunk.set(lx, sy, lz, Block::Sand);
                 local_heights.push(((bx, bz), sy));
             } else if sy >= sea + snow_line {
-                let base_y = (sy - surface_thickness).max(bedrock::MIN_Y);
+                let base_y = (sy - surface_thickness).max(MIN_Y);
                 chunk.set(lx, base_y, lz, Block::Bedrock);
                 for y in (base_y + 1)..sy {
                     chunk.set(lx, y, lz, Block::Stone);
                 }
                 chunk.set(lx, sy, lz, Block::Stone);
-                let snow_y = (sy + 1).min(bedrock::MAX_Y);
+                let snow_y = (sy + 1).min(world::MAX_Y);
                 chunk.set(lx, snow_y, lz, Block::SnowLayer);
                 local_heights.push(((bx, bz), snow_y));
             } else {
-                let base_y = (sy - surface_thickness).max(bedrock::MIN_Y);
+                let base_y = (sy - surface_thickness).max(MIN_Y);
                 chunk.set(lx, base_y, lz, Block::Bedrock);
                 for y in (base_y + 1)..(sy - 1).max(base_y + 1) {
                     chunk.set(lx, y, lz, Block::Stone);
