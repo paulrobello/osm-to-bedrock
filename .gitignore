@@ -36,7 +36,6 @@ map_exports/
 .env.*
 *.log
 ENHANCEMENTS.md
-graphify-out/
 
 # Local git hooks
 .githooks/
