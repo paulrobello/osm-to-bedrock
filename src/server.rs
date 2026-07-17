@@ -116,7 +116,13 @@ enum JobState {
         created: Instant,
     },
     Error {
-        message: String,
+        /// Generic, client-safe summary (e.g. `"conversion failed"`). Returned
+        /// from `/status` and `/download` so internal details don't leak.
+        ///
+        /// The full `anyhow` chain is logged at ERROR level by [`set_job_error`]
+        /// when the job transitions into this state; it is intentionally not
+        /// stored on the job to avoid any future code path leaking it.
+        public_message: String,
         /// Wall-clock time at which the job failed.
         created: Instant,
     },
@@ -145,16 +151,36 @@ struct AppState {
 
 // ── Job helper functions ───────────────────────────────────────────────────
 
+/// Lock the shared jobs map, recovering from mutex poisoning.
+///
+/// If a worker thread panicked while holding the lock, the mutex becomes
+/// "poisoned" and the standard `.lock().expect(...)` would propagate the panic,
+/// taking down the API server on the *next* request. Recovering via
+/// [`PoisonError::into_inner`] keeps the lock usable — at worst, some stale
+/// state from the panicked worker remains visible, but the affected job has
+/// already recorded its own `Error` state and the server stays up.
+fn lock_jobs(jobs: &Jobs) -> std::sync::MutexGuard<'_, HashMap<String, JobState>> {
+    jobs.lock().unwrap_or_else(|poisoned| {
+        log::error!(
+            "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+        );
+        poisoned.into_inner()
+    })
+}
+
 /// Record a terminal error state for `jid` into the jobs map.
 ///
-/// Centralises the repetitive `jobs.lock().insert(jid, JobState::Error{…})` pattern
-/// found in every background-task closure.
-fn set_job_error(jobs: &Jobs, jid: &str, message: String) {
-    let mut map = jobs.lock().expect("jobs lock poisoned");
+/// `public_message` is the generic, client-safe string returned from
+/// `/status` and `/download` (no `anyhow` chains, OS strings, or filesystem
+/// paths). `full_error` is logged at ERROR level for operator post-mortem
+/// but never stored on the job or sent to the client.
+fn set_job_error(jobs: &Jobs, jid: &str, public_message: &str, full_error: impl std::fmt::Display) {
+    log::error!("Job {jid} failed: {full_error}");
+    let mut map = lock_jobs(jobs);
     map.insert(
         jid.to_string(),
         JobState::Error {
-            message,
+            public_message: public_message.to_string(),
             created: Instant::now(),
         },
     );
@@ -183,7 +209,7 @@ fn zip_and_persist(
         Ok(()) => {
             let persisted_dir = output_dir.keep();
             let final_path = persisted_dir.join(format!("{world_name}.{extension}"));
-            let mut map = jobs.lock().expect("jobs lock poisoned");
+            let mut map = lock_jobs(jobs);
             map.insert(
                 jid.to_string(),
                 JobState::Done {
@@ -193,7 +219,12 @@ fn zip_and_persist(
             );
         }
         Err(e) => {
-            set_job_error(jobs, jid, format!("Failed to create .{extension}: {e}"));
+            set_job_error(
+                jobs,
+                jid,
+                "archive creation failed",
+                format!("Failed to create .{extension}: {e}"),
+            );
         }
     }
 }
@@ -349,6 +380,69 @@ impl Default for ConvertOptions {
             edition: Default::default(),
         }
     }
+}
+
+/// Approximate equatorial meters-per-degree for the equirectangular projection
+/// used by `CoordConverter`. We use the equatorial value as a conservative
+/// upper bound — at higher latitudes a degree of longitude is shorter, so
+/// using the equator overestimates the resulting block count, which is the
+/// safe direction for a guardrail.
+const METERS_PER_DEGREE: f64 = 111_320.0;
+
+/// Maximum block extent per axis that the in-memory conversion pipeline can
+/// handle without risking OOM or runaway rasterisation time.
+///
+/// 250_000 blocks per axis ≈ 15_625 chunk-columns per axis. Java Edition's
+/// in-memory writer (see ARC-001) OOMs at roughly 6_300 blocks per axis, so
+/// this cap does not by itself prevent every OOM — it is a coarse guardrail
+/// that rejects the obvious abuse cases (continent- and country-spanning
+/// bboxes, scale-bumped metro extracts). The real fix is ARC-001's streaming
+/// writer; once that lands this cap can be raised.
+///
+/// At `scale = 1` (default): max bbox span ≈ 2.25° per axis (≈ 250 km at the
+/// equator) — permits every example bbox in `README.md` / `docs/CLI.md`
+/// (central London 0.03°, Paris 0.03°, Mt Rainier terrain 1°).
+/// At `scale = 100` (max): max bbox span ≈ 0.0225° per axis (≈ 2.5 km).
+const MAX_BLOCK_EXTENT: f64 = 250_000.0;
+
+/// Validate an OSM bounding box (`[south, west, north, east]`) for range,
+/// ordering, finite-ness, and resulting block extent at the given `scale`.
+///
+/// Returns `Err(&'static str)` suitable for an HTTP 400 body when the bbox
+/// is malformed or would produce an unsafe block count.
+fn validate_bbox(bbox: [f64; 4], scale: f64) -> Result<(), &'static str> {
+    let [south, west, north, east] = bbox;
+    if !south.is_finite()
+        || !west.is_finite()
+        || !north.is_finite()
+        || !east.is_finite()
+        || !scale.is_finite()
+    {
+        return Err("bbox and scale must be finite numbers");
+    }
+    if !(-90.0..=90.0).contains(&south) || !(-90.0..=90.0).contains(&north) {
+        return Err("latitudes must be in range -90 .. 90");
+    }
+    if !(-180.0..=180.0).contains(&west) || !(-180.0..=180.0).contains(&east) {
+        return Err("longitudes must be in range -180 .. 180");
+    }
+    if south > north {
+        return Err("south latitude must be <= north latitude");
+    }
+    if west > east {
+        return Err("west longitude must be <= east longitude");
+    }
+    // Block extent = span_degrees * meters_per_degree * scale.
+    // Reject any bbox that would exceed MAX_BLOCK_EXTENT per axis.
+    let lat_blocks = (north - south) * METERS_PER_DEGREE * scale;
+    let lon_blocks = (east - west) * METERS_PER_DEGREE * scale;
+    if lat_blocks > MAX_BLOCK_EXTENT || lon_blocks > MAX_BLOCK_EXTENT {
+        return Err(
+            "bbox × scale exceeds maximum supported block extent (250000 blocks per axis); \
+             reduce the bounding box or lower scale",
+        );
+    }
+    Ok(())
 }
 
 /// Validate numeric bounds on `ConvertOptions`.
@@ -647,7 +741,7 @@ async fn parse_pbf_handler(mut multipart: Multipart) -> Result<impl IntoResponse
     }
 
     if file_bytes_list.is_empty() {
-        return Err(anyhow::anyhow!("multipart field 'file' is missing").into());
+        return Err(ApiError::bad_request("multipart field 'file' is missing"));
     }
 
     // ── Parse each file and merge ────────────────────────────────────────
@@ -748,6 +842,9 @@ struct FetchPreviewRequest {
 async fn fetch_preview_handler(
     Json(req): Json<FetchPreviewRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Validate bbox ranges + block-extent budget (preview uses scale=1.0).
+    validate_bbox(req.bbox, 1.0).map_err(|e| ApiError::bad_request(e.to_string()))?;
+
     let bbox = (req.bbox[0], req.bbox[1], req.bbox[2], req.bbox[3]);
     let filter = req.filter;
     let overpass_url = match req.overpass_url.as_deref().filter(|s| !s.is_empty()) {
@@ -841,9 +938,10 @@ async fn convert_handler(
         }
     }
 
-    let bytes = file_bytes.ok_or_else(|| anyhow::anyhow!("multipart field 'file' is missing"))?;
+    let bytes =
+        file_bytes.ok_or_else(|| ApiError::bad_request("multipart field 'file' is missing"))?;
     if bytes.is_empty() {
-        return Err(anyhow::anyhow!("uploaded file is empty").into());
+        return Err(ApiError::bad_request("uploaded file is empty"));
     }
 
     let options: ConvertOptions = match options_str {
@@ -865,7 +963,12 @@ async fn convert_handler(
 
     // Insert initial state
     {
-        let mut jobs = state.jobs.lock().expect("jobs lock poisoned");
+        let mut jobs = state.jobs.lock().unwrap_or_else(|p| {
+            log::error!(
+                "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+            );
+            p.into_inner()
+        });
         jobs.insert(
             job_id.clone(),
             JobState::Running {
@@ -887,13 +990,23 @@ async fn convert_handler(
         let tmp_file = match tempfile::Builder::new().suffix(".osm.pbf").tempfile() {
             Ok(mut f) => {
                 if let Err(e) = f.write_all(&bytes).and_then(|_| f.flush()) {
-                    set_job_error(&jobs, &jid, format!("Failed to write temp file: {e}"));
+                    set_job_error(
+                        &jobs,
+                        &jid,
+                        "failed to process upload",
+                        format!("Failed to write temp file: {e}"),
+                    );
                     return;
                 }
                 f
             }
             Err(e) => {
-                set_job_error(&jobs, &jid, format!("Failed to create temp file: {e}"));
+                set_job_error(
+                    &jobs,
+                    &jid,
+                    "failed to process upload",
+                    format!("Failed to create temp file: {e}"),
+                );
                 return;
             }
         };
@@ -903,7 +1016,12 @@ async fn convert_handler(
         let output_dir = match tempfile::Builder::new().prefix("osm-world-").tempdir() {
             Ok(d) => d,
             Err(e) => {
-                set_job_error(&jobs, &jid, format!("Failed to create output dir: {e}"));
+                set_job_error(
+                    &jobs,
+                    &jid,
+                    "conversion failed",
+                    format!("Failed to create output dir: {e}"),
+                );
                 return;
             }
         };
@@ -911,7 +1029,12 @@ async fn convert_handler(
         let world_name = sanitize_world_name(&options.world_name);
         let world_dir = output_dir.path().join(&world_name);
         if let Err(e) = std::fs::create_dir_all(&world_dir) {
-            set_job_error(&jobs, &jid, format!("Failed to create world dir: {e}"));
+            set_job_error(
+                &jobs,
+                &jid,
+                "conversion failed",
+                format!("Failed to create world dir: {e}"),
+            );
             return;
         }
 
@@ -920,7 +1043,12 @@ async fn convert_handler(
             match download_elevation_for_pbf(&tmp_path, &jobs, &jid) {
                 Ok(dir) => Some(dir),
                 Err(e) => {
-                    set_job_error(&jobs, &jid, format!("Elevation download failed: {e}"));
+                    set_job_error(
+                        &jobs,
+                        &jid,
+                        "elevation download failed",
+                        format!("Elevation download failed: {e}"),
+                    );
                     return;
                 }
             }
@@ -957,7 +1085,12 @@ async fn convert_handler(
         let jid_for_progress = jid.clone();
 
         let result = run_conversion(&params, &|progress, msg| {
-            let mut map = jobs_for_progress.lock().expect("jobs lock poisoned");
+            let mut map = jobs_for_progress.lock().unwrap_or_else(|p| {
+                log::error!(
+                    "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+                );
+                p.into_inner()
+            });
             map.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
@@ -976,7 +1109,12 @@ async fn convert_handler(
                 &world_name,
                 options.edition,
             ),
-            Err(e) => set_job_error(&jobs, &jid, format!("Conversion failed: {e}")),
+            Err(e) => set_job_error(
+                &jobs,
+                &jid,
+                "conversion failed",
+                format!("Conversion failed: {e}"),
+            ),
         }
     });
 
@@ -988,7 +1126,12 @@ async fn status_handler(
     State(state): State<AppState>,
     axum::extract::Path(job_id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, Response> {
-    let jobs = state.jobs.lock().expect("jobs lock poisoned");
+    let jobs = state.jobs.lock().unwrap_or_else(|p| {
+        log::error!(
+            "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+        );
+        p.into_inner()
+    });
     match jobs.get(&job_id) {
         Some(JobState::Running { progress, message }) => Ok(Json(json!({
             "state": "running",
@@ -1000,10 +1143,10 @@ async fn status_handler(
             "progress": 1.0,
             "message": "Conversion complete",
         }))),
-        Some(JobState::Error { message, .. }) => Ok(Json(json!({
+        Some(JobState::Error { public_message, .. }) => Ok(Json(json!({
             "state": "error",
             "progress": 0.0,
-            "message": message,
+            "message": public_message,
         }))),
         None => Err((
             StatusCode::NOT_FOUND,
@@ -1019,7 +1162,12 @@ async fn download_handler(
     axum::extract::Path(job_id): axum::extract::Path<String>,
 ) -> Result<Response, Response> {
     let path = {
-        let jobs = state.jobs.lock().expect("jobs lock poisoned");
+        let jobs = state.jobs.lock().unwrap_or_else(|p| {
+            log::error!(
+                "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+            );
+            p.into_inner()
+        });
         match jobs.get(&job_id) {
             Some(JobState::Done { path, .. }) => path.clone(),
             Some(JobState::Running { .. }) => {
@@ -1029,10 +1177,10 @@ async fn download_handler(
                 )
                     .into_response());
             }
-            Some(JobState::Error { message, .. }) => {
+            Some(JobState::Error { public_message, .. }) => {
                 return Err((
                     StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({ "error": format!("conversion failed: {message}") })),
+                    Json(json!({ "error": public_message })),
                 )
                     .into_response());
             }
@@ -1075,11 +1223,14 @@ async fn download_handler(
             ];
             Ok((headers, data).into_response())
         }
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("failed to read mcworld file: {e}") })),
-        )
-            .into_response()),
+        Err(e) => {
+            log::error!("Failed to read mcworld file {}: {e}", path.display());
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "failed to read mcworld file" })),
+            )
+                .into_response())
+        }
     }
 }
 
@@ -1138,9 +1289,10 @@ async fn preview_handler(mut multipart: Multipart) -> Result<impl IntoResponse, 
         }
     }
 
-    let bytes = file_bytes.ok_or_else(|| anyhow::anyhow!("multipart field 'file' is missing"))?;
+    let bytes =
+        file_bytes.ok_or_else(|| ApiError::bad_request("multipart field 'file' is missing"))?;
     if bytes.is_empty() {
-        return Err(anyhow::anyhow!("uploaded file is empty").into());
+        return Err(ApiError::bad_request("uploaded file is empty"));
     }
 
     let options: ConvertOptions = match options_str {
@@ -1268,6 +1420,9 @@ async fn preview_handler(mut multipart: Multipart) -> Result<impl IntoResponse, 
 async fn fetch_block_preview_handler(
     Json(req): Json<FetchPreviewRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Validate bbox ranges + block-extent budget (preview uses scale=1.0).
+    validate_bbox(req.bbox, 1.0).map_err(|e| ApiError::bad_request(e.to_string()))?;
+
     let bbox = (req.bbox[0], req.bbox[1], req.bbox[2], req.bbox[3]);
     let filter = req.filter;
     let overpass_url = match req.overpass_url.as_deref().filter(|s| !s.is_empty()) {
@@ -1372,6 +1527,10 @@ async fn fetch_convert_handler(
 ) -> Result<impl IntoResponse, ApiError> {
     let bbox = (req.bbox[0], req.bbox[1], req.bbox[2], req.bbox[3]);
 
+    // Validate bbox ranges + block-extent budget before acquiring the semaphore
+    // so abusive bboxes fail fast with 400 instead of consuming a job slot.
+    validate_bbox(req.bbox, req.options.scale).map_err(|e| ApiError::bad_request(e.to_string()))?;
+
     // Validate request parameters before accepting the job, so invalid source
     // controls fail the request immediately instead of becoming async job errors.
     validate_fetch_convert_options(&req.options)
@@ -1390,7 +1549,12 @@ async fn fetch_convert_handler(
 
     let job_id = Uuid::new_v4().to_string();
     {
-        let mut jobs = state.jobs.lock().expect("jobs lock poisoned");
+        let mut jobs = state.jobs.lock().unwrap_or_else(|p| {
+            log::error!(
+                "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+            );
+            p.into_inner()
+        });
         jobs.insert(
             job_id.clone(),
             JobState::Running {
@@ -1438,7 +1602,12 @@ async fn fetch_convert_handler(
             bbox,
             &source_options,
             &mut |progress, msg| {
-                let mut map = jobs_fetch.lock().expect("jobs lock poisoned");
+                let mut map = jobs_fetch.lock().unwrap_or_else(|p| {
+                log::error!(
+                    "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+                );
+                p.into_inner()
+            });
                 map.insert(
                     jid_fetch.clone(),
                     JobState::Running {
@@ -1450,7 +1619,12 @@ async fn fetch_convert_handler(
         ) {
             Ok(result) => result,
             Err(e) => {
-                set_job_error(&jobs, &jid, format!("Map data fetch failed: {e}"));
+                set_job_error(
+                    &jobs,
+                    &jid,
+                    "map data fetch failed",
+                    format!("Map data fetch failed: {e}"),
+                );
                 return;
             }
         };
@@ -1462,7 +1636,12 @@ async fn fetch_convert_handler(
         let output_dir = match tempfile::Builder::new().prefix("osm-world-").tempdir() {
             Ok(d) => d,
             Err(e) => {
-                set_job_error(&jobs, &jid, format!("Failed to create output dir: {e}"));
+                set_job_error(
+                    &jobs,
+                    &jid,
+                    "conversion failed",
+                    format!("Failed to create output dir: {e}"),
+                );
                 return;
             }
         };
@@ -1470,7 +1649,12 @@ async fn fetch_convert_handler(
         let world_name = sanitize_world_name(&options.world_name);
         let world_dir = output_dir.path().join(&world_name);
         if let Err(e) = std::fs::create_dir_all(&world_dir) {
-            set_job_error(&jobs, &jid, format!("Failed to create world dir: {e}"));
+            set_job_error(
+                &jobs,
+                &jid,
+                "conversion failed",
+                format!("Failed to create world dir: {e}"),
+            );
             return;
         }
 
@@ -1487,7 +1671,12 @@ async fn fetch_convert_handler(
             ) {
                 Ok(dir) => Some(dir),
                 Err(e) => {
-                    set_job_error(&jobs, &jid, format!("Elevation download failed: {e}"));
+                    set_job_error(
+                        &jobs,
+                        &jid,
+                        "elevation download failed",
+                        format!("Elevation download failed: {e}"),
+                    );
                     return;
                 }
             }
@@ -1524,7 +1713,12 @@ async fn fetch_convert_handler(
         let jid_for_progress = jid.clone();
 
         let result = crate::pipeline::run_conversion_from_data(data, &params, &|progress, msg| {
-            let mut map = jobs_for_progress.lock().expect("jobs lock poisoned");
+            let mut map = jobs_for_progress.lock().unwrap_or_else(|p| {
+                log::error!(
+                    "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+                );
+                p.into_inner()
+            });
             map.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
@@ -1543,7 +1737,12 @@ async fn fetch_convert_handler(
                 &world_name,
                 options.edition,
             ),
-            Err(e) => set_job_error(&jobs, &jid, format!("Conversion failed: {e}")),
+            Err(e) => set_job_error(
+                &jobs,
+                &jid,
+                "conversion failed",
+                format!("Conversion failed: {e}"),
+            ),
         }
     });
 
@@ -1622,6 +1821,9 @@ async fn terrain_convert_handler(
     let bbox = (req.bbox[0], req.bbox[1], req.bbox[2], req.bbox[3]);
     let options = req.options;
 
+    // Validate bbox + scale before acquiring the semaphore.
+    validate_bbox(req.bbox, options.scale).map_err(|e| ApiError::bad_request(e.to_string()))?;
+
     // Validate numeric parameters before accepting the job.
     validate_terrain_convert_options(&options).map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -1632,7 +1834,12 @@ async fn terrain_convert_handler(
 
     let job_id = Uuid::new_v4().to_string();
     {
-        let mut jobs = state.jobs.lock().expect("jobs lock poisoned");
+        let mut jobs = state.jobs.lock().unwrap_or_else(|p| {
+            log::error!(
+                "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+            );
+            p.into_inner()
+        });
         jobs.insert(
             job_id.clone(),
             JobState::Running {
@@ -1654,7 +1861,12 @@ async fn terrain_convert_handler(
             match download_elevation_for_bbox(bbox.0, bbox.1, bbox.2, bbox.3, &jobs, &jid) {
                 Ok(dir) => Some(dir),
                 Err(e) => {
-                    set_job_error(&jobs, &jid, format!("Elevation download failed: {e}"));
+                    set_job_error(
+                        &jobs,
+                        &jid,
+                        "elevation download failed",
+                        format!("Elevation download failed: {e}"),
+                    );
                     return;
                 }
             }
@@ -1665,7 +1877,12 @@ async fn terrain_convert_handler(
         let output_dir = match tempfile::Builder::new().prefix("terrain-world-").tempdir() {
             Ok(d) => d,
             Err(e) => {
-                set_job_error(&jobs, &jid, format!("Failed to create output dir: {e}"));
+                set_job_error(
+                    &jobs,
+                    &jid,
+                    "conversion failed",
+                    format!("Failed to create output dir: {e}"),
+                );
                 return;
             }
         };
@@ -1673,7 +1890,12 @@ async fn terrain_convert_handler(
         let world_name = sanitize_world_name(&options.world_name);
         let world_dir = output_dir.path().join(&world_name);
         if let Err(e) = std::fs::create_dir_all(&world_dir) {
-            set_job_error(&jobs, &jid, format!("Failed to create world dir: {e}"));
+            set_job_error(
+                &jobs,
+                &jid,
+                "conversion failed",
+                format!("Failed to create world dir: {e}"),
+            );
             return;
         }
 
@@ -1699,7 +1921,12 @@ async fn terrain_convert_handler(
         let jid_for_progress = jid.clone();
 
         let result = run_terrain_only_to_disk(&params, &|progress, msg| {
-            let mut map = jobs_for_progress.lock().expect("jobs lock poisoned");
+            let mut map = jobs_for_progress.lock().unwrap_or_else(|p| {
+                log::error!(
+                    "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+                );
+                p.into_inner()
+            });
             map.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
@@ -1718,7 +1945,12 @@ async fn terrain_convert_handler(
                 &world_name,
                 options.edition,
             ),
-            Err(e) => set_job_error(&jobs, &jid, format!("Terrain generation failed: {e:#}")),
+            Err(e) => set_job_error(
+                &jobs,
+                &jid,
+                "terrain generation failed",
+                format!("Terrain generation failed: {e:#}"),
+            ),
         }
     });
 
@@ -1749,6 +1981,9 @@ async fn overture_convert_handler(
     let bbox = (req.bbox[0], req.bbox[1], req.bbox[2], req.bbox[3]);
     let options = req.options;
 
+    // Validate bbox + scale before acquiring the semaphore.
+    validate_bbox(req.bbox, options.scale).map_err(|e| ApiError::bad_request(e.to_string()))?;
+
     // Validate numeric parameters before accepting the job.
     validate_fetch_convert_options(&options).map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -1759,7 +1994,12 @@ async fn overture_convert_handler(
 
     let job_id = Uuid::new_v4().to_string();
     {
-        let mut jobs = state.jobs.lock().expect("jobs lock poisoned");
+        let mut jobs = state.jobs.lock().unwrap_or_else(|p| {
+            log::error!(
+                "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+            );
+            p.into_inner()
+        });
         jobs.insert(
             job_id.clone(),
             JobState::Running {
@@ -1800,7 +2040,12 @@ async fn overture_convert_handler(
             bbox,
             &overture_params,
             &mut |progress, msg| {
-                let mut map = jobs_ov.lock().expect("jobs lock poisoned");
+                let mut map = jobs_ov.lock().unwrap_or_else(|p| {
+                log::error!(
+                    "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+                );
+                p.into_inner()
+            });
                 map.insert(
                     jid_ov.clone(),
                     JobState::Running {
@@ -1815,7 +2060,12 @@ async fn overture_convert_handler(
                 d
             }
             Err(e) => {
-                set_job_error(&jobs, &jid, format!("Overture fetch failed: {e}"));
+                set_job_error(
+                    &jobs,
+                    &jid,
+                    "overture fetch failed",
+                    format!("Overture fetch failed: {e}"),
+                );
                 return;
             }
         };
@@ -1825,7 +2075,8 @@ async fn overture_convert_handler(
             set_job_error(
                 &jobs,
                 &jid,
-                "No Overture data found for this area".to_string(),
+                "no overture data found for this area",
+                "No Overture data found for this area",
             );
             return;
         }
@@ -1833,7 +2084,12 @@ async fn overture_convert_handler(
         let output_dir = match tempfile::Builder::new().prefix("osm-world-").tempdir() {
             Ok(d) => d,
             Err(e) => {
-                set_job_error(&jobs, &jid, format!("Failed to create output dir: {e}"));
+                set_job_error(
+                    &jobs,
+                    &jid,
+                    "conversion failed",
+                    format!("Failed to create output dir: {e}"),
+                );
                 return;
             }
         };
@@ -1841,7 +2097,12 @@ async fn overture_convert_handler(
         let world_name = sanitize_world_name(&options.world_name);
         let world_dir = output_dir.path().join(&world_name);
         if let Err(e) = std::fs::create_dir_all(&world_dir) {
-            set_job_error(&jobs, &jid, format!("Failed to create world dir: {e}"));
+            set_job_error(
+                &jobs,
+                &jid,
+                "conversion failed",
+                format!("Failed to create world dir: {e}"),
+            );
             return;
         }
 
@@ -1850,7 +2111,12 @@ async fn overture_convert_handler(
             match download_elevation_for_bbox(bbox.0, bbox.1, bbox.2, bbox.3, &jobs, &jid) {
                 Ok(dir) => Some(dir),
                 Err(e) => {
-                    set_job_error(&jobs, &jid, format!("Elevation download failed: {e}"));
+                    set_job_error(
+                        &jobs,
+                        &jid,
+                        "elevation download failed",
+                        format!("Elevation download failed: {e}"),
+                    );
                     return;
                 }
             }
@@ -1887,7 +2153,12 @@ async fn overture_convert_handler(
         let jid_for_progress = jid.clone();
 
         let result = crate::pipeline::run_conversion_from_data(data, &params, &|progress, msg| {
-            let mut map = jobs_for_progress.lock().expect("jobs lock poisoned");
+            let mut map = jobs_for_progress.lock().unwrap_or_else(|p| {
+                log::error!(
+                    "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+                );
+                p.into_inner()
+            });
             map.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
@@ -1906,7 +2177,12 @@ async fn overture_convert_handler(
                 &world_name,
                 options.edition,
             ),
-            Err(e) => set_job_error(&jobs, &jid, format!("Conversion failed: {e}")),
+            Err(e) => set_job_error(
+                &jobs,
+                &jid,
+                "conversion failed",
+                format!("Conversion failed: {e}"),
+            ),
         }
     });
 
@@ -1963,7 +2239,12 @@ fn download_elevation_for_bbox_mapped(
         max_lon,
         &cache,
         &|i, total: usize, name| {
-            let mut jobs = jobs.lock().expect("jobs lock poisoned");
+            let mut jobs = jobs.lock().unwrap_or_else(|p| {
+                log::error!(
+                    "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+                );
+                p.into_inner()
+            });
             jobs.insert(
                 jid.to_string(),
                 JobState::Running {
@@ -1987,6 +2268,141 @@ async fn cache_areas_handler() -> impl IntoResponse {
     Json(entries)
 }
 
+// ── Optional shared-secret API authentication (SEC-001 / SEC-007) ───────────
+
+/// Shared-secret API key used by [`require_api_key`].
+///
+/// When `None` (no `--api-key` flag and no `OSM_TO_BEDROCK_API_KEY` env var),
+/// the server runs unauthenticated — the historical loopback-dev behaviour.
+/// When `Some`, mutating routes and `/download`, `/status`, `/cache` require
+/// an `Authorization: Bearer <key>` (or `X-API-Key: <key>`) header.
+///
+/// Wrapped in `Arc` so the auth state clones cheaply per request.
+#[derive(Clone, Default)]
+struct AuthState {
+    api_key: Option<Arc<String>>,
+}
+
+/// Constant-time byte-slice equality comparison.
+///
+/// Avoids timing side-channels when comparing the presented API key against
+/// the expected one. Length-leakage is acceptable (we early-return on length
+/// mismatch) — the key length is not secret.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Extract the presented shared-secret from request headers.
+///
+/// Accepts either `Authorization: Bearer <key>` (standard) or
+/// `X-API-Key: <key>` (convenient for browser-driven clients that cannot
+/// easily set `Authorization`). Returns the bytes that should be compared
+/// against the configured key.
+fn extract_presented_key(headers: &axum::http::HeaderMap) -> Option<&[u8]> {
+    if let Some(v) = headers.get("X-API-Key") {
+        return Some(v.as_bytes());
+    }
+    let auth = headers.get(axum::http::header::AUTHORIZATION)?;
+    let s = auth.to_str().ok()?;
+    // Accept "Bearer <key>", "bearer <key>", or a bare key.
+    if let Some(rest) = s
+        .strip_prefix("Bearer ")
+        .or_else(|| s.strip_prefix("bearer "))
+    {
+        Some(rest.trim().as_bytes())
+    } else {
+        Some(s.trim().as_bytes())
+    }
+}
+
+/// Axum middleware enforcing the optional shared-secret API key.
+///
+/// When [`AuthState::api_key`] is `None` the request passes through unchanged
+/// (preserving the unauthenticated loopback-dev workflow). When set, requests
+/// must present the key in the `Authorization` (or `X-API-Key`) header.
+/// Mismatched or missing credentials get HTTP 401.
+async fn require_api_key(
+    State(auth): State<AuthState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, StatusCode> {
+    let Some(expected) = auth.api_key.as_deref() else {
+        return Ok(next.run(request).await);
+    };
+    match extract_presented_key(request.headers()) {
+        Some(presented) if constant_time_eq(presented, expected.as_bytes()) => {
+            Ok(next.run(request).await)
+        }
+        _ => Err(StatusCode::UNAUTHORIZED),
+    }
+}
+
+/// Classify a bind host as loopback (safe to expose without auth) or not.
+///
+/// Returns `true` for the literal strings `127.0.0.1`, `::1`, `localhost`,
+/// and any IPv4 host whose first octet is `127` (e.g. `127.0.0.2`,
+/// `127.1.2.3`). Everything else (including `0.0.0.0`) returns `false`.
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim();
+    if host.is_empty() {
+        return true; // unspecified → default-bind, treat as loopback
+    }
+    if host == "127.0.0.1" || host == "::1" || host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    // 127.x.x.x — loopback IPv4 block.
+    host.split('.').next().is_some_and(|first_octet| {
+        first_octet.len() <= 3
+            && first_octet.bytes().all(|b| b.is_ascii_digit())
+            && first_octet == "127"
+    })
+}
+
+/// Resolve the API key from the `--api-key` flag, falling back to the
+/// `OSM_TO_BEDROCK_API_KEY` env var. Returns `None` when neither is set
+/// (or when the resolved value is empty).
+fn resolve_api_key(flag_value: Option<String>) -> Option<String> {
+    flag_value.filter(|s| !s.is_empty()).or_else(|| {
+        std::env::var("OSM_TO_BEDROCK_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty())
+    })
+}
+
+/// Fail-safe bind guard: refuse to start when binding a non-loopback host
+/// without an API key configured, unless explicitly overridden.
+///
+/// Operators who genuinely want unauthenticated exposure on a public interface
+/// can set `OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1` to acknowledge the risk.
+fn enforce_safe_bind(host: &str, api_key: &Option<String>) -> Result<()> {
+    if is_loopback_host(host) || api_key.is_some() {
+        return Ok(());
+    }
+    let allow = std::env::var("OSM_TO_BEDROCK_ALLOW_INSECURE_BIND")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes"))
+        .unwrap_or(false);
+    if allow {
+        log::warn!(
+            "Binding non-loopback host '{host}' without an API key — INSECURE. \
+             Anyone reachable can submit conversions and read any job's output. \
+             Set --api-key / OSM_TO_BEDROCK_API_KEY to require authentication."
+        );
+        return Ok(());
+    }
+    anyhow::bail!(
+        "Refusing to bind non-loopback host '{host}' without an API key. \
+         Set --api-key / OSM_TO_BEDROCK_API_KEY to enable authentication, \
+         or set OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1 to acknowledge the risk."
+    )
+}
+
 /// Resolve the allowed CORS origin.
 ///
 /// Reads `CORS_ALLOWED_ORIGIN` from the environment; falls back to the default
@@ -1998,11 +2414,11 @@ fn cors_allowed_origin() -> HeaderValue {
         .unwrap_or_else(|| HeaderValue::from_static("http://localhost:8031"))
 }
 
-/// Build the Axum router with a fresh state (useful for tests).
+/// Build the Axum router with a fresh state and no API key (useful for tests).
 #[allow(dead_code)]
 pub fn build_router() -> Router {
     let (state, _) = build_state();
-    build_router_with_state(state)
+    build_router_with_state(state, None)
 }
 
 /// Background task that periodically evicts completed/errored jobs older than
@@ -2018,7 +2434,12 @@ async fn job_eviction_task(jobs: Jobs) {
         let mut to_evict: Vec<(String, PathBuf)> = Vec::new();
 
         {
-            let guard = jobs.lock().expect("jobs lock poisoned");
+            let guard = jobs.lock().unwrap_or_else(|p| {
+                log::error!(
+                    "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+                );
+                p.into_inner()
+            });
             for (id, state) in guard.iter() {
                 let (age, path) = match state {
                     JobState::Done { created, path } => {
@@ -2039,7 +2460,12 @@ async fn job_eviction_task(jobs: Jobs) {
             continue;
         }
 
-        let mut guard = jobs.lock().expect("jobs lock poisoned");
+        let mut guard = jobs.lock().unwrap_or_else(|p| {
+            log::error!(
+                "jobs mutex was poisoned by a panicked worker — recovering for server stability"
+            );
+            p.into_inner()
+        });
         for (id, path) in to_evict {
             guard.remove(&id);
             if path.as_os_str().is_empty() {
@@ -2093,11 +2519,16 @@ fn build_state() -> (AppState, Jobs) {
     (state, jobs)
 }
 
-/// Build the Axum router from an existing [`AppState`].
+/// Build the Axum router from an existing [`AppState`] and an optional
+/// shared-secret API key.
 ///
 /// Separated from [`build_router`] so callers (e.g. `run`) can share the
 /// same `Jobs` reference with the eviction task.
-fn build_router_with_state(state: AppState) -> Router {
+///
+/// When `api_key` is `Some`, mutating routes plus `/download`, `/status`,
+/// and `/cache/areas` require the matching key in the `Authorization` (or
+/// `X-API-Key`) header. `/health` remains unauthenticated.
+fn build_router_with_state(state: AppState, api_key: Option<String>) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(cors_allowed_origin())
         .allow_methods([
@@ -2110,9 +2541,18 @@ fn build_router_with_state(state: AppState) -> Router {
     const PARSE_LIMIT: usize = 100 * 1024 * 1024;
     const CONVERT_LIMIT: usize = 500 * 1024 * 1024;
     const PREVIEW_LIMIT: usize = 50 * 1024 * 1024;
+    // JSON request bodies are tiny (bbox + options + filter); 1 MiB is generous
+    // and explicitly caps what was previously Axum's implicit 2 MiB default
+    // (SEC-005).
+    const JSON_LIMIT: usize = 1024 * 1024;
 
-    Router::new()
-        .route("/health", get(health))
+    let auth_state = AuthState {
+        api_key: api_key.map(Arc::new),
+    };
+
+    // Routes that require the shared-secret API key when one is configured.
+    // `/health` is intentionally public so liveness probes work without creds.
+    let protected_routes = Router::new()
         .route(
             "/parse",
             post(parse_pbf_handler).layer(DefaultBodyLimit::max(PARSE_LIMIT)),
@@ -2125,21 +2565,55 @@ fn build_router_with_state(state: AppState) -> Router {
             "/preview",
             post(preview_handler).layer(DefaultBodyLimit::max(PREVIEW_LIMIT)),
         )
-        .route("/fetch-preview", post(fetch_preview_handler))
-        .route("/fetch-block-preview", post(fetch_block_preview_handler))
-        .route("/fetch-convert", post(fetch_convert_handler))
-        .route("/terrain-convert", post(terrain_convert_handler))
-        .route("/overture-convert", post(overture_convert_handler))
+        .route(
+            "/fetch-preview",
+            post(fetch_preview_handler).layer(DefaultBodyLimit::max(JSON_LIMIT)),
+        )
+        .route(
+            "/fetch-block-preview",
+            post(fetch_block_preview_handler).layer(DefaultBodyLimit::max(JSON_LIMIT)),
+        )
+        .route(
+            "/fetch-convert",
+            post(fetch_convert_handler).layer(DefaultBodyLimit::max(JSON_LIMIT)),
+        )
+        .route(
+            "/terrain-convert",
+            post(terrain_convert_handler).layer(DefaultBodyLimit::max(JSON_LIMIT)),
+        )
+        .route(
+            "/overture-convert",
+            post(overture_convert_handler).layer(DefaultBodyLimit::max(JSON_LIMIT)),
+        )
         .route("/cache/areas", get(cache_areas_handler))
         .route("/status/{id}", get(status_handler))
         .route("/download/{id}", get(download_handler))
-        .layer(cors)
+        .layer(axum::middleware::from_fn_with_state(
+            auth_state,
+            require_api_key,
+        ))
+        .with_state(state.clone());
+
+    Router::new()
+        .route("/health", get(health))
         .with_state(state)
+        .merge(protected_routes)
+        .layer(cors)
 }
 
 /// Start the HTTP server and block until it exits.
-pub async fn run(host: &str, port: u16) -> Result<()> {
+///
+/// `api_key_flag` is the value of the `--api-key` CLI flag (may be `None`);
+/// it falls back to the `OSM_TO_BEDROCK_API_KEY` env var. When both are unset
+/// the server runs unauthenticated — the historical loopback-dev behaviour.
+pub async fn run(host: &str, port: u16, api_key_flag: Option<String>) -> Result<()> {
     cleanup_orphaned_temp_dirs();
+
+    let api_key = resolve_api_key(api_key_flag);
+
+    // Fail-safe bind guard (SEC-001): refuse to expose the server on a
+    // non-loopback interface without an API key, unless explicitly overridden.
+    enforce_safe_bind(host, &api_key)?;
 
     // Build shared state so the eviction task and router share the same Jobs map.
     let (state, jobs) = build_state();
@@ -2150,19 +2624,33 @@ pub async fn run(host: &str, port: u16) -> Result<()> {
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!("API server listening on http://{addr}");
-    axum::serve(listener, build_router_with_state(state)).await?;
+    if api_key.is_some() {
+        log::info!("API key authentication enabled on protected routes.");
+    } else {
+        log::info!(
+            "No API key configured — running unauthenticated. \
+             Set --api-key / OSM_TO_BEDROCK_API_KEY before binding non-loopback hosts."
+        );
+    }
+    axum::serve(listener, build_router_with_state(state, api_key)).await?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiError, FetchConvertRequest, fetch_convert_elevation_phase_progress,
-        fetch_convert_phase_progress, parse_fetch_convert_source_options,
-        parse_overture_failure_mode_for_server, parse_poi_source_mode_for_server,
-        sanitize_world_name,
+        ApiError, AuthState, FetchConvertRequest, constant_time_eq, enforce_safe_bind,
+        extract_presented_key, fetch_convert_elevation_phase_progress,
+        fetch_convert_phase_progress, is_loopback_host, lock_jobs,
+        parse_fetch_convert_source_options, parse_overture_failure_mode_for_server,
+        parse_poi_source_mode_for_server, resolve_api_key, sanitize_world_name, validate_bbox,
     };
     use crate::params::{OvertureFailureMode, PoiSourceMode};
+    use std::sync::{Arc, Mutex};
+
+    /// Serialize env-mutating tests so `OSM_TO_BEDROCK_*` var reads/writes
+    /// don't race each other under cargo's default parallel runner.
+    static ENV_GUARD: Mutex<()> = Mutex::new(());
 
     #[test]
     fn normal_name_passes_through() {
@@ -2343,5 +2831,294 @@ mod tests {
         );
 
         assert!(err.contains("unknown priority 'bad-priority'"));
+    }
+
+    // ── SEC-004: validate_bbox ────────────────────────────────────────────
+
+    #[test]
+    fn validate_bbox_accepts_typical_metropolitan_bbox() {
+        // Central London extract from README.md, at default scale=1.
+        assert!(validate_bbox([51.50, -0.13, 51.52, -0.10], 1.0).is_ok());
+    }
+
+    #[test]
+    fn validate_bbox_accepts_paris_extract() {
+        // Paris extract from docs/CLI.md, at default scale=1.
+        assert!(validate_bbox([48.85, 2.33, 48.87, 2.36], 1.0).is_ok());
+    }
+
+    #[test]
+    fn validate_bbox_accepts_mt_rainier_terrain_extract() {
+        // 1° × 1° terrain example from README.md at scale=1.
+        assert!(validate_bbox([47.0, -122.5, 48.0, -121.5], 1.0).is_ok());
+    }
+
+    #[test]
+    fn validate_bbox_rejects_latitude_out_of_range() {
+        assert!(validate_bbox([91.0, 0.0, 92.0, 1.0], 1.0).is_err());
+        assert!(validate_bbox([-91.0, 0.0, -90.0, 1.0], 1.0).is_err());
+    }
+
+    #[test]
+    fn validate_bbox_rejects_longitude_out_of_range() {
+        assert!(validate_bbox([0.0, -181.0, 1.0, -180.0], 1.0).is_err());
+        assert!(validate_bbox([0.0, 180.0, 1.0, 181.0], 1.0).is_err());
+    }
+
+    #[test]
+    fn validate_bbox_rejects_inverted_ordering() {
+        assert!(validate_bbox([10.0, 0.0, 5.0, 1.0], 1.0).is_err()); // south > north
+        assert!(validate_bbox([0.0, 10.0, 1.0, 5.0], 1.0).is_err()); // west > east
+    }
+
+    #[test]
+    fn validate_bbox_rejects_non_finite() {
+        assert!(validate_bbox([f64::NAN, 0.0, 1.0, 1.0], 1.0).is_err());
+        assert!(validate_bbox([0.0, f64::INFINITY, 1.0, 1.0], 1.0).is_err());
+        assert!(validate_bbox([0.0, 0.0, 1.0, 1.0], f64::NAN).is_err());
+    }
+
+    #[test]
+    fn validate_bbox_rejects_continent_scale_at_scale_1() {
+        // 50° × 50° span — continent-scale, clearly abusive.
+        let err = validate_bbox([0.0, 0.0, 50.0, 50.0], 1.0).unwrap_err();
+        assert!(err.contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn validate_bbox_rejects_world_span() {
+        // Whole-world bbox — must be rejected.
+        assert!(validate_bbox([-90.0, -180.0, 90.0, 180.0], 1.0).is_err());
+    }
+
+    #[test]
+    fn validate_bbox_rejects_metropolitan_at_max_scale() {
+        // A bbox that's fine at scale=1 becomes unsafe at scale=100
+        // (scale=100 multiplies the block count by 100 per axis).
+        assert!(validate_bbox([51.50, -0.13, 51.52, -0.10], 100.0).is_err());
+    }
+
+    // ── SEC-001: auth helpers ─────────────────────────────────────────────
+
+    #[test]
+    fn constant_time_eq_matches_identical_bytes() {
+        assert!(constant_time_eq(b"abcdef", b"abcdef"));
+    }
+
+    #[test]
+    fn constant_time_eq_rejects_different_bytes() {
+        assert!(!constant_time_eq(b"abcdef", b"abcdeg"));
+    }
+
+    #[test]
+    fn constant_time_eq_rejects_different_lengths() {
+        assert!(!constant_time_eq(b"abc", b"abcd"));
+        assert!(!constant_time_eq(b"abcd", b"abc"));
+    }
+
+    #[test]
+    fn constant_time_eq_accepts_empty_slices() {
+        assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
+    fn is_loopback_host_recognizes_loopback_addresses() {
+        assert!(is_loopback_host("127.0.0.1"));
+        assert!(is_loopback_host("127.0.0.2"));
+        assert!(is_loopback_host("127.1.2.3"));
+        assert!(is_loopback_host("::1"));
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("Localhost"));
+        assert!(is_loopback_host("")); // unspecified → default-bind
+    }
+
+    #[test]
+    fn is_loopback_host_rejects_public_and_wildcard_addresses() {
+        assert!(!is_loopback_host("0.0.0.0"));
+        assert!(!is_loopback_host("192.168.1.1"));
+        assert!(!is_loopback_host("10.0.0.1"));
+        assert!(!is_loopback_host("example.com"));
+        assert!(!is_loopback_host("169.254.0.1"));
+    }
+
+    #[test]
+    fn extract_presented_key_reads_bearer_authorization_header() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer s3cret-key"),
+        );
+        assert_eq!(
+            extract_presented_key(&headers),
+            Some(b"s3cret-key".as_slice())
+        );
+    }
+
+    #[test]
+    fn extract_presented_key_reads_lowercase_bearer_scheme() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("bearer s3cret-key"),
+        );
+        assert_eq!(
+            extract_presented_key(&headers),
+            Some(b"s3cret-key".as_slice())
+        );
+    }
+
+    #[test]
+    fn extract_presented_key_reads_x_api_key_header() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "X-API-Key",
+            axum::http::HeaderValue::from_static("s3cret-key"),
+        );
+        assert_eq!(
+            extract_presented_key(&headers),
+            Some(b"s3cret-key".as_slice())
+        );
+    }
+
+    #[test]
+    fn extract_presented_key_reads_bare_authorization_value() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("s3cret-key"),
+        );
+        assert_eq!(
+            extract_presented_key(&headers),
+            Some(b"s3cret-key".as_slice())
+        );
+    }
+
+    #[test]
+    fn extract_presented_key_returns_none_when_absent() {
+        let headers = axum::http::HeaderMap::new();
+        assert_eq!(extract_presented_key(&headers), None);
+    }
+
+    #[test]
+    fn resolve_api_key_prefers_flag_value_over_env() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        // SAFETY: ENV_GUARD serializes these tests so there is no concurrent access.
+        unsafe { std::env::set_var("OSM_TO_BEDROCK_API_KEY", "env-value") };
+        let result = resolve_api_key(Some("flag-value".to_string()));
+        unsafe { std::env::remove_var("OSM_TO_BEDROCK_API_KEY") };
+        assert_eq!(result.as_deref(), Some("flag-value"));
+    }
+
+    #[test]
+    fn resolve_api_key_falls_back_to_env_var() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        // SAFETY: ENV_GUARD serializes these tests so there is no concurrent access.
+        unsafe { std::env::set_var("OSM_TO_BEDROCK_API_KEY", "env-value") };
+        let result = resolve_api_key(None);
+        unsafe { std::env::remove_var("OSM_TO_BEDROCK_API_KEY") };
+        assert_eq!(result.as_deref(), Some("env-value"));
+    }
+
+    #[test]
+    fn resolve_api_key_ignores_empty_flag_value() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        // SAFETY: ENV_GUARD serializes these tests so there is no concurrent access.
+        unsafe { std::env::set_var("OSM_TO_BEDROCK_API_KEY", "env-value") };
+        let result = resolve_api_key(Some(String::new()));
+        unsafe { std::env::remove_var("OSM_TO_BEDROCK_API_KEY") };
+        assert_eq!(result.as_deref(), Some("env-value"));
+    }
+
+    #[test]
+    fn resolve_api_key_returns_none_when_unset() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        // SAFETY: ENV_GUARD serializes these tests so there is no concurrent access.
+        unsafe { std::env::remove_var("OSM_TO_BEDROCK_API_KEY") };
+        assert!(resolve_api_key(None).is_none());
+    }
+
+    #[test]
+    fn enforce_safe_bind_allows_loopback_without_key() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        // SAFETY: ENV_GUARD serializes these tests so there is no concurrent access.
+        unsafe { std::env::remove_var("OSM_TO_BEDROCK_ALLOW_INSECURE_BIND") };
+        assert!(enforce_safe_bind("127.0.0.1", &None).is_ok());
+        assert!(enforce_safe_bind("localhost", &None).is_ok());
+        assert!(enforce_safe_bind("::1", &None).is_ok());
+    }
+
+    #[test]
+    fn enforce_safe_bind_allows_public_with_key() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        // SAFETY: ENV_GUARD serializes these tests so there is no concurrent access.
+        unsafe { std::env::remove_var("OSM_TO_BEDROCK_ALLOW_INSECURE_BIND") };
+        let key = Some("a-secret".to_string());
+        assert!(enforce_safe_bind("0.0.0.0", &key).is_ok());
+    }
+
+    #[test]
+    fn enforce_safe_bind_rejects_public_without_key_by_default() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        // SAFETY: ENV_GUARD serializes these tests so there is no concurrent access.
+        unsafe { std::env::remove_var("OSM_TO_BEDROCK_ALLOW_INSECURE_BIND") };
+        let err = enforce_safe_bind("0.0.0.0", &None).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("OSM_TO_BEDROCK_API_KEY"), "msg = {msg}");
+        assert!(
+            msg.contains("OSM_TO_BEDROCK_ALLOW_INSECURE_BIND"),
+            "msg = {msg}"
+        );
+    }
+
+    #[test]
+    fn enforce_safe_bind_allows_public_without_key_when_overridden() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        // SAFETY: ENV_GUARD serializes these tests so there is no concurrent access.
+        unsafe { std::env::set_var("OSM_TO_BEDROCK_ALLOW_INSECURE_BIND", "1") };
+        let result = enforce_safe_bind("0.0.0.0", &None);
+        unsafe { std::env::remove_var("OSM_TO_BEDROCK_ALLOW_INSECURE_BIND") };
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn auth_state_default_is_unauthenticated() {
+        let state = AuthState::default();
+        assert!(state.api_key.is_none());
+    }
+
+    #[test]
+    fn auth_state_holds_arc_wrapped_key() {
+        let state = AuthState {
+            api_key: Some(Arc::new("a-secret".to_string())),
+        };
+        assert_eq!(
+            state.api_key.as_deref().map(String::as_str),
+            Some("a-secret")
+        );
+    }
+
+    // ── SEC-006: lock_jobs poisoning recovery ─────────────────────────────
+
+    #[test]
+    fn lock_jobs_recovers_from_poisoned_mutex_instead_of_panicking() {
+        let jobs: super::Jobs = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        // Simulate a panicked worker by deliberately poisoning the lock.
+        let jobs_for_panic = jobs.clone();
+        let panic_thread = std::thread::spawn(move || {
+            let _guard = jobs_for_panic.lock().unwrap();
+            panic!("simulated worker panic while holding the lock");
+        });
+        assert!(
+            panic_thread.join().is_err(),
+            "sanity: the thread should have panicked"
+        );
+
+        // The mutex is now poisoned. `lock_jobs` must NOT panic — it should
+        // recover the inner map and let the server keep serving requests.
+        let recovered = lock_jobs(&jobs);
+        assert!(
+            recovered.is_empty(),
+            "poison recovery should expose the underlying map"
+        );
     }
 }

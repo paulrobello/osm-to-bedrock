@@ -163,6 +163,16 @@ struct ServeArgs {
     #[arg(long, default_value = "127.0.0.1")]
     host: String,
 
+    /// Optional shared-secret API key for protected routes (mutating routes,
+    /// /download, /status, /cache). Falls back to the
+    /// `OSM_TO_BEDROCK_API_KEY` env var. When both are unset the server runs
+    /// unauthenticated (loopback-dev mode); in that case binding a
+    /// non-loopback host is refused unless `OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1`
+    /// is set. Never hardcode a real key in a Dockerfile or shell history —
+    /// pass it via env var or a secret mount.
+    #[arg(long)]
+    api_key: Option<String>,
+
     /// Clear cached Overpass data before starting.
     /// Optionally specify a minimum age (e.g. 7d, 24h, 30m) to only
     /// remove entries older than that. Without an age, all entries are removed.
@@ -563,7 +573,7 @@ fn main() -> Result<()> {
             }
             // ── Start server ────────────────────────────────────────────────────
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(server::run(&args.host, args.port))
+            rt.block_on(server::run(&args.host, args.port, args.api_key))
         }
         Commands::TerrainConvert(args) => {
             let bbox = parse_bbox(&args.bbox)?;

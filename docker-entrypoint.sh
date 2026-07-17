@@ -1,9 +1,21 @@
 #!/bin/sh
 set -e
 
-# Start the Rust API server in the background
+# Start the Rust API server in the background.
+#
+# SECURITY: this image binds the API to 0.0.0.0, which is NOT a loopback
+# address. The Rust binary refuses to start in that case unless EITHER:
+#   - an API key is provided via $OSM_TO_BEDROCK_API_KEY (recommmended —
+#     enables shared-secret auth on all mutating routes plus /download,
+#     /status, /cache), OR
+#   - $OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1 is set (explicitly acknowledges
+#     the risk of running unauthenticated on a public interface).
+#
+# Never hardcode a real API key in this file or in the Dockerfile. Operators
+# must inject it at runtime via `docker run -e OSM_TO_BEDROCK_API_KEY=...`,
+# a Docker secret, or a `.env` file mounted read-only.
 echo "Starting Rust API server on port ${API_PORT:-3002}..."
-osm-to-bedrock serve --host 0.0.0.0 --port "${API_PORT:-3002}" &
+osm-to-bedrock serve --host 0.0.0.0 --port "${API_PORT:-3002}" ${API_KEY_FLAG:-} &
 RUST_PID=$!
 
 # Start the Next.js standalone server

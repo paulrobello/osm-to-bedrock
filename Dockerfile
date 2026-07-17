@@ -47,6 +47,12 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENV RUST_LOG=info
 ENV NEXT_PUBLIC_API_URL=http://localhost:3002
 
+# SECURITY: the entrypoint binds the API to 0.0.0.0. The Rust binary refuses
+# to start without OSM_TO_BEDROCK_API_KEY being set by the operator (or
+# OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1 to explicitly accept the risk of an
+# unauthenticated public bind). Do NOT bake a key into this image — operators
+# must inject it at runtime via `docker run -e OSM_TO_BEDROCK_API_KEY=...`,
+# a Docker secret, or a read-only mounted env file.
 EXPOSE 3002 8031
 
 ENTRYPOINT ["docker-entrypoint.sh"]

@@ -191,13 +191,24 @@ impl ChunkWriter {
             let mut db = match DB::open(&db_path, opts) {
                 Ok(db) => db,
                 Err(e) => {
-                    *thread_error_writer.lock().unwrap() = Some(format!("opening LevelDB: {e:?}"));
+                    // Mutex poisoning is recoverable — recover the guard and
+                    // store the real error for the caller (same pattern as
+                    // `lock_jobs` in `server.rs`). The writer thread is the
+                    // only producer here, so poisoning would only happen if
+                    // this thread itself panicked, in which case we're already
+                    // exiting.
+                    *thread_error_writer
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner()) =
+                        Some(format!("opening LevelDB: {e:?}"));
                     return;
                 }
             };
             for (key, value) in rx {
                 if let Err(e) = db.put(&key, &value) {
-                    *thread_error_writer.lock().unwrap() = Some(format!("LevelDB put: {e:?}"));
+                    *thread_error_writer
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner()) = Some(format!("LevelDB put: {e:?}"));
                     return; // dropping rx closes the channel; sender will get an error
                 }
             }
