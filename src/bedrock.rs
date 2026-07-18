@@ -116,7 +116,7 @@ const TAG_BLOCK_ENTITY: u8 = 0x31; // BlockEntity
 const TAG_FINALIZED: u8 = 0x36; // FinalizedState
 
 // ── Re-exports from world module ──────────────────────────────────────────
-pub use crate::world::{ChunkData, Edition, MAX_Y, MIN_Y, WorldWriter};
+pub use crate::world::{ChunkData, ChunkStore, Edition, MAX_Y, MIN_Y, WorldWriter};
 
 fn chunk_key(cx: i32, cz: i32, tag: u8) -> Vec<u8> {
     let mut k = Vec::with_capacity(9);
@@ -319,18 +319,10 @@ impl ChunkWriter {
 /// thread before the next tile begins, so peak memory stays proportional
 /// to a single tile regardless of total map size.
 pub struct BedrockWorld {
-    chunks: HashMap<(i32, i32), ChunkData>,
+    /// Shared chunk grid + auxiliary override maps + optional tile bounds.
+    /// Common to both backends; see [`ChunkStore`].
+    store: ChunkStore,
     output: PathBuf,
-    /// Block entity NBT blobs, keyed by chunk coordinates.
-    block_entities: HashMap<(i32, i32), Vec<Vec<u8>>>,
-    /// Sign direction overrides, keyed by (x, y, z) world coordinates.
-    sign_directions: HashMap<(i32, i32, i32), i32>,
-    /// Direction overrides for directional blocks (stairs, rails), keyed by (x, y, z).
-    block_directions: HashMap<(i32, i32, i32), i32>,
-    /// Optional spatial bounds for incremental tile processing.
-    /// When set, `set_block` and related methods silently ignore coordinates
-    /// outside the given chunk-coordinate rectangle (min_cx, max_cx, min_cz, max_cz).
-    chunk_bounds: Option<(i32, i32, i32, i32)>,
     /// Background LevelDB writer for the streaming path. `None` for the
     /// in-memory / bounded modes, where `save()` opens a fresh writer.
     /// When `Some`, [`WorldWriter::flush_tile`] drains accumulated chunks
@@ -341,12 +333,8 @@ pub struct BedrockWorld {
 impl BedrockWorld {
     pub fn new(output: &Path) -> Self {
         Self {
-            chunks: HashMap::new(),
+            store: ChunkStore::new(),
             output: output.to_path_buf(),
-            block_entities: HashMap::new(),
-            sign_directions: HashMap::new(),
-            block_directions: HashMap::new(),
-            chunk_bounds: None,
             stream_writer: None,
         }
     }
@@ -360,12 +348,8 @@ impl BedrockWorld {
     /// during tile-based streaming conversion.
     pub fn new_bounded(output: &Path, min_cx: i32, max_cx: i32, min_cz: i32, max_cz: i32) -> Self {
         Self {
-            chunks: HashMap::new(),
+            store: ChunkStore::new_bounded(min_cx, max_cx, min_cz, max_cz),
             output: output.to_path_buf(),
-            block_entities: HashMap::new(),
-            sign_directions: HashMap::new(),
-            block_directions: HashMap::new(),
-            chunk_bounds: Some((min_cx, max_cx, min_cz, max_cz)),
             stream_writer: None,
         }
     }
@@ -380,130 +364,16 @@ impl BedrockWorld {
     pub fn new_streaming(output: PathBuf, db_path: PathBuf) -> Result<Self> {
         let writer = ChunkWriter::open(db_path)?;
         Ok(Self {
-            chunks: HashMap::new(),
+            store: ChunkStore::new(),
             output,
-            block_entities: HashMap::new(),
-            sign_directions: HashMap::new(),
-            block_directions: HashMap::new(),
-            chunk_bounds: None,
             stream_writer: Some(writer),
         })
-    }
-
-    /// Return `true` if (cx, cz) falls within the optional chunk bounds.
-    #[inline]
-    fn in_bounds(&self, cx: i32, cz: i32) -> bool {
-        match self.chunk_bounds {
-            None => true,
-            Some((min_cx, max_cx, min_cz, max_cz)) => {
-                cx >= min_cx && cx <= max_cx && cz >= min_cz && cz <= max_cz
-            }
-        }
-    }
-
-    /// Set a block at absolute (x, y, z) world coordinates.
-    pub fn set_block(&mut self, x: i32, y: i32, z: i32, block: Block) {
-        let cx = x.div_euclid(16);
-        let cz = z.div_euclid(16);
-        if !self.in_bounds(cx, cz) {
-            return;
-        }
-        let lx = x.rem_euclid(16);
-        let lz = z.rem_euclid(16);
-        self.chunks
-            .entry((cx, cz))
-            .or_default()
-            .set(lx, y, lz, block);
-    }
-
-    /// Insert a pre-built ChunkData at (cx, cz), replacing any existing data.
-    ///
-    /// Used by the parallel terrain-fill path, where each chunk is constructed
-    /// independently on a worker thread and then merged into the world serially.
-    pub fn insert_chunk(&mut self, cx: i32, cz: i32, chunk: ChunkData) {
-        self.chunks.insert((cx, cz), chunk);
-    }
-
-    /// Get a block at absolute (x, y, z) world coordinates.
-    pub fn get_block(&self, x: i32, y: i32, z: i32) -> Block {
-        let cx = x.div_euclid(16);
-        let cz = z.div_euclid(16);
-        let lx = x.rem_euclid(16);
-        let lz = z.rem_euclid(16);
-        self.chunks
-            .get(&(cx, cz))
-            .map(|chunk| chunk.get(lx, y, lz))
-            .unwrap_or(Block::Air)
-    }
-
-    /// Add a block entity NBT blob at the given world coordinates.
-    /// The blob is appended to the list for the chunk containing (x, z).
-    pub fn add_block_entity(&mut self, x: i32, _y: i32, z: i32, nbt: Vec<u8>) {
-        let cx = x.div_euclid(16);
-        let cz = z.div_euclid(16);
-        if !self.in_bounds(cx, cz) {
-            return;
-        }
-        self.block_entities.entry((cx, cz)).or_default().push(nbt);
-    }
-
-    /// Set the sign direction (0-15) for a sign block at world coordinates.
-    pub fn set_sign_direction(&mut self, x: i32, y: i32, z: i32, direction: i32) {
-        let cx = x.div_euclid(16);
-        let cz = z.div_euclid(16);
-        if !self.in_bounds(cx, cz) {
-            return;
-        }
-        self.sign_directions.insert((x, y, z), direction);
     }
 
     /// Get the sign direction for a block at world coordinates, defaulting to 0.
     #[allow(dead_code)]
     pub fn get_sign_direction(&self, x: i32, y: i32, z: i32) -> i32 {
-        self.sign_directions.get(&(x, y, z)).copied().unwrap_or(0)
-    }
-
-    /// Set the direction for a directional block (stairs, rails) at world coordinates.
-    pub fn set_block_direction(&mut self, x: i32, y: i32, z: i32, direction: i32) {
-        let cx = x.div_euclid(16);
-        let cz = z.div_euclid(16);
-        if !self.in_bounds(cx, cz) {
-            return;
-        }
-        self.block_directions.insert((x, y, z), direction);
-    }
-
-    /// Extract the top-most non-Air block at each (x, z) column.
-    pub fn surface_blocks(&self) -> Vec<(i32, i32, i32, String)> {
-        let mut result = Vec::new();
-        for (&(cx, cz), chunk) in &self.chunks {
-            for lx in 0..16i32 {
-                for lz in 0..16i32 {
-                    let wx = cx * 16 + lx;
-                    let wz = cz * 16 + lz;
-                    for y in (MIN_Y..=MAX_Y).rev() {
-                        let b = chunk.get(lx, y, lz);
-                        if b != Block::Air {
-                            result.push((wx, wz, y, format!("{:?}", b)));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        result
-    }
-
-    /// Return the number of chunks currently in the world.
-    #[allow(dead_code)]
-    pub fn chunk_count(&self) -> usize {
-        self.chunks.len()
-    }
-
-    /// Returns all occupied chunk coordinates (copy, for iteration).
-    #[allow(dead_code)]
-    pub fn occupied_chunks(&self) -> Vec<(i32, i32)> {
-        self.chunks.keys().copied().collect()
+        self.store.get_sign_direction(x, y, z)
     }
 
     /// Write all accumulated chunks to the given [`ChunkWriter`] and clear
@@ -512,20 +382,21 @@ impl BedrockWorld {
     /// This is the core of the incremental/streaming write path.  After this
     /// call the world is empty and can be reused for the next tile.
     pub fn drain_chunks_to_writer(&mut self, writer: &ChunkWriter) -> Result<()> {
-        for ((cx, cz), chunk) in self.chunks.drain() {
+        // Take ownership of the chunk map first so the immutable borrows of
+        // the auxiliary maps inside the loop are borrow-clean. After the
+        // drain, drop the per-tile auxiliary state too.
+        let chunks = self.store.take_chunks();
+        for ((cx, cz), chunk) in chunks {
             writer.write_chunk(
                 cx,
                 cz,
                 &chunk,
-                self.block_entities.get(&(cx, cz)),
-                &self.sign_directions,
-                &self.block_directions,
+                self.store.block_entities().get(&(cx, cz)),
+                self.store.sign_directions(),
+                self.store.block_directions(),
             )?;
         }
-        // Clear per-chunk auxiliary data that has been flushed.
-        self.block_entities.clear();
-        self.sign_directions.clear();
-        self.block_directions.clear();
+        self.store.clear_aux();
         Ok(())
     }
 
@@ -556,15 +427,15 @@ impl BedrockWorld {
 
         let writer = ChunkWriter::open(db_path)?;
 
-        for (&(cx, cz), chunk) in &self.chunks {
+        for (&(cx, cz), chunk) in self.store.chunks() {
             writer
                 .write_chunk(
                     cx,
                     cz,
                     chunk,
-                    self.block_entities.get(&(cx, cz)),
-                    &self.sign_directions,
-                    &self.block_directions,
+                    self.store.block_entities().get(&(cx, cz)),
+                    self.store.sign_directions(),
+                    self.store.block_directions(),
                 )
                 .with_context(|| format!("writing chunk ({cx},{cz})"))?;
         }
@@ -627,35 +498,35 @@ impl BedrockWorld {
 
 impl crate::world::WorldWriter for BedrockWorld {
     fn set_block(&mut self, x: i32, y: i32, z: i32, block: Block) {
-        BedrockWorld::set_block(self, x, y, z, block)
+        self.store.set_block(x, y, z, block)
     }
     fn get_block(&self, x: i32, y: i32, z: i32) -> Block {
-        BedrockWorld::get_block(self, x, y, z)
+        self.store.get_block(x, y, z)
     }
     fn insert_chunk(&mut self, cx: i32, cz: i32, chunk: ChunkData) {
-        BedrockWorld::insert_chunk(self, cx, cz, chunk)
+        self.store.insert_chunk(cx, cz, chunk)
     }
     fn add_block_entity(&mut self, x: i32, y: i32, z: i32, nbt: Vec<u8>) {
-        BedrockWorld::add_block_entity(self, x, y, z, nbt)
+        self.store.add_block_entity(x, y, z, nbt)
     }
     fn set_sign_direction(&mut self, x: i32, y: i32, z: i32, direction: i32) {
-        BedrockWorld::set_sign_direction(self, x, y, z, direction)
+        self.store.set_sign_direction(x, y, z, direction)
     }
     fn set_block_direction(&mut self, x: i32, y: i32, z: i32, direction: i32) {
-        BedrockWorld::set_block_direction(self, x, y, z, direction)
+        self.store.set_block_direction(x, y, z, direction)
     }
     fn chunk_count(&self) -> usize {
-        BedrockWorld::chunk_count(self)
+        self.store.chunk_count()
     }
     fn occupied_chunks(&self) -> Vec<(i32, i32)> {
-        BedrockWorld::occupied_chunks(self)
+        self.store.occupied_chunks()
     }
     fn surface_blocks(&self) -> Vec<(i32, i32, i32, String)> {
-        BedrockWorld::surface_blocks(self)
+        self.store.surface_blocks()
     }
 
     fn set_tile_bounds(&mut self, min_cx: i32, max_cx: i32, min_cz: i32, max_cz: i32) {
-        self.chunk_bounds = Some((min_cx, max_cx, min_cz, max_cz));
+        self.store.set_tile_bounds(min_cx, max_cx, min_cz, max_cz)
     }
 
     fn flush_tile(&mut self) -> Result<()> {

@@ -123,6 +123,236 @@ impl ChunkData {
     }
 }
 
+// ── ChunkStore ────────────────────────────────────────────────────────────
+
+/// Shared in-memory storage for the fields and write-path operations that
+/// are byte-for-byte identical between [`BedrockWorld`] and [`JavaWorld`].
+///
+/// Holds the per-chunk block grids, the auxiliary per-chunk and per-block
+/// override maps (block-entity NBT blobs, sign directions, directional-block
+/// directions), and the optional chunk-coordinate rectangle used to silently
+/// filter out-of-tile writes during streaming conversion. Both backends embed
+/// a `ChunkStore` and delegate the [`WorldWriter`] methods that don't depend
+/// on edition-specific storage to it; the backend keeps only the
+/// edition-specific state (output path, the LevelDB writer thread for
+/// Bedrock, the region-file encoder for Java).
+///
+/// Extracting this struct removes the ~150 lines of duplicated storage and
+/// write-filtering logic that previously lived in lockstep across the two
+/// backends (QA-001). The trait itself stays edition-agnostic and does *not*
+/// expose a `store()` accessor: test doubles such as `RecordingWorld` use a
+/// different in-memory representation by design (independent oracle for
+/// cross-edition parity), and forcing them through `ChunkStore` would
+/// compromise that role.
+///
+/// [`BedrockWorld`]: crate::bedrock::BedrockWorld
+/// [`JavaWorld`]: crate::anvil::JavaWorld
+pub struct ChunkStore {
+    /// Per-chunk block grids, keyed by chunk (cx, cz).
+    chunks: HashMap<(i32, i32), ChunkData>,
+    /// Block-entity NBT blobs, bucketed by the chunk (cx, cz) that owns them.
+    /// Each blob already carries its own (x, y, z) position inside the NBT
+    /// payload; the writer keys only by chunk so it can hand the whole bucket
+    /// to the edition-specific chunk encoder.
+    block_entities: HashMap<(i32, i32), Vec<Vec<u8>>>,
+    /// Sign direction overrides (0-15), keyed by sign block (x, y, z).
+    sign_directions: HashMap<(i32, i32, i32), i32>,
+    /// Directional-block overrides (stairs, rails), keyed by (x, y, z).
+    block_directions: HashMap<(i32, i32, i32), i32>,
+    /// Optional chunk-coordinate rectangle for streaming-tile filtering.
+    /// When `Some`, `set_block` and friends silently ignore writes whose
+    /// chunk falls outside `[min_cx, max_cx] × [min_cz, max_cz]`.
+    chunk_bounds: Option<(i32, i32, i32, i32)>,
+}
+
+impl ChunkStore {
+    /// Create an unbounded store (accepts writes in any chunk).
+    pub fn new() -> Self {
+        Self {
+            chunks: HashMap::new(),
+            block_entities: HashMap::new(),
+            sign_directions: HashMap::new(),
+            block_directions: HashMap::new(),
+            chunk_bounds: None,
+        }
+    }
+
+    /// Create a store bounded to the chunk rectangle
+    /// `[min_cx, max_cx] × [min_cz, max_cz]`. Writes whose chunk falls
+    /// outside the rectangle are silently dropped.
+    pub fn new_bounded(min_cx: i32, max_cx: i32, min_cz: i32, max_cz: i32) -> Self {
+        Self {
+            chunk_bounds: Some((min_cx, max_cx, min_cz, max_cz)),
+            ..Self::new()
+        }
+    }
+
+    /// Replace the active chunk-coordinate rectangle. Used by Bedrock's
+    /// streaming `set_tile_bounds` override; Java's `set_tile_bounds` stays
+    /// the trait's default no-op, so its `chunk_bounds` is set only at
+    /// construction via `new_bounded`.
+    pub fn set_tile_bounds(&mut self, min_cx: i32, max_cx: i32, min_cz: i32, max_cz: i32) {
+        self.chunk_bounds = Some((min_cx, max_cx, min_cz, max_cz));
+    }
+
+    /// Return `true` if (cx, cz) falls within the optional chunk bounds.
+    #[inline]
+    pub fn in_bounds(&self, cx: i32, cz: i32) -> bool {
+        match self.chunk_bounds {
+            None => true,
+            Some((min_cx, max_cx, min_cz, max_cz)) => {
+                cx >= min_cx && cx <= max_cx && cz >= min_cz && cz <= max_cz
+            }
+        }
+    }
+
+    /// Set a block at absolute (x, y, z) world coordinates.
+    pub fn set_block(&mut self, x: i32, y: i32, z: i32, block: Block) {
+        let cx = x.div_euclid(16);
+        let cz = z.div_euclid(16);
+        if !self.in_bounds(cx, cz) {
+            return;
+        }
+        let lx = x.rem_euclid(16);
+        let lz = z.rem_euclid(16);
+        self.chunks
+            .entry((cx, cz))
+            .or_default()
+            .set(lx, y, lz, block);
+    }
+
+    /// Get a block at absolute (x, y, z) world coordinates.
+    pub fn get_block(&self, x: i32, y: i32, z: i32) -> Block {
+        let cx = x.div_euclid(16);
+        let cz = z.div_euclid(16);
+        let lx = x.rem_euclid(16);
+        let lz = z.rem_euclid(16);
+        self.chunks
+            .get(&(cx, cz))
+            .map(|chunk| chunk.get(lx, y, lz))
+            .unwrap_or(Block::Air)
+    }
+
+    /// Insert a pre-built [`ChunkData`] at (cx, cz), replacing any existing data.
+    pub fn insert_chunk(&mut self, cx: i32, cz: i32, chunk: ChunkData) {
+        self.chunks.insert((cx, cz), chunk);
+    }
+
+    /// Bucket a pre-encoded block-entity NBT blob under the chunk that owns
+    /// `(x, z)`. See [`WorldWriter::add_block_entity`] for why `y` is unused
+    /// at this layer.
+    pub fn add_block_entity(&mut self, x: i32, _y: i32, z: i32, nbt: Vec<u8>) {
+        let cx = x.div_euclid(16);
+        let cz = z.div_euclid(16);
+        if !self.in_bounds(cx, cz) {
+            return;
+        }
+        self.block_entities.entry((cx, cz)).or_default().push(nbt);
+    }
+
+    /// Record a sign-direction override (0-15) at (x, y, z).
+    pub fn set_sign_direction(&mut self, x: i32, y: i32, z: i32, direction: i32) {
+        let cx = x.div_euclid(16);
+        let cz = z.div_euclid(16);
+        if !self.in_bounds(cx, cz) {
+            return;
+        }
+        self.sign_directions.insert((x, y, z), direction);
+    }
+
+    /// Record a directional-block override (stairs, rails) at (x, y, z).
+    pub fn set_block_direction(&mut self, x: i32, y: i32, z: i32, direction: i32) {
+        let cx = x.div_euclid(16);
+        let cz = z.div_euclid(16);
+        if !self.in_bounds(cx, cz) {
+            return;
+        }
+        self.block_directions.insert((x, y, z), direction);
+    }
+
+    /// Number of chunks currently held.
+    pub fn chunk_count(&self) -> usize {
+        self.chunks.len()
+    }
+
+    /// All occupied chunk coordinates.
+    pub fn occupied_chunks(&self) -> Vec<(i32, i32)> {
+        self.chunks.keys().copied().collect()
+    }
+
+    /// Top-most non-Air block at each (x, z) column as
+    /// `Vec<(world_x, world_z, y, block_name)>`.
+    pub fn surface_blocks(&self) -> Vec<(i32, i32, i32, String)> {
+        let mut result = Vec::new();
+        for (&(cx, cz), chunk) in &self.chunks {
+            for lx in 0..16i32 {
+                for lz in 0..16i32 {
+                    let wx = cx * 16 + lx;
+                    let wz = cz * 16 + lz;
+                    for y in (MIN_Y..=MAX_Y).rev() {
+                        let b = chunk.get(lx, y, lz);
+                        if b != Block::Air {
+                            result.push((wx, wz, y, format!("{:?}", b)));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    // ── Accessors used by edition-specific code (save / drain / encode) ──
+
+    /// Read access to the chunk map (both backends' `save` paths).
+    pub fn chunks(&self) -> &HashMap<(i32, i32), ChunkData> {
+        &self.chunks
+    }
+
+    /// Read access to the block-entity buckets (both backends' encode paths).
+    pub fn block_entities(&self) -> &HashMap<(i32, i32), Vec<Vec<u8>>> {
+        &self.block_entities
+    }
+
+    /// Read access to sign-direction overrides (Bedrock encode path).
+    pub fn sign_directions(&self) -> &HashMap<(i32, i32, i32), i32> {
+        &self.sign_directions
+    }
+
+    /// Read access to directional-block overrides (Bedrock encode path).
+    pub fn block_directions(&self) -> &HashMap<(i32, i32, i32), i32> {
+        &self.block_directions
+    }
+
+    /// Take ownership of the chunk map, leaving an empty map in its place.
+    /// Used by Bedrock's streaming `flush_tile` path (via
+    /// `drain_chunks_to_writer`) to drain the per-tile scratch state.
+    pub fn take_chunks(&mut self) -> HashMap<(i32, i32), ChunkData> {
+        std::mem::take(&mut self.chunks)
+    }
+
+    /// Read access to a sign direction, defaulting to 0. Used only by
+    /// Bedrock's `get_sign_direction` helper.
+    pub fn get_sign_direction(&self, x: i32, y: i32, z: i32) -> i32 {
+        self.sign_directions.get(&(x, y, z)).copied().unwrap_or(0)
+    }
+
+    /// Clear the three auxiliary override maps after a streaming drain has
+    /// flushed them to the underlying sink. The chunk map is cleared
+    /// separately via [`ChunkStore::take_chunks`].
+    pub fn clear_aux(&mut self) {
+        self.block_entities.clear();
+        self.sign_directions.clear();
+        self.block_directions.clear();
+    }
+}
+
+impl Default for ChunkStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ── WorldWriter trait ────────────────────────────────────────────────────
 
 /// Common interface for writing a Minecraft world.
@@ -135,6 +365,12 @@ impl ChunkData {
 /// uniformly: each tile's blocks flow through `set_block`/`insert_chunk`,
 /// then [`WorldWriter::flush_tile`] drains them to the edition-specific
 /// sink (LevelDB writer for Bedrock, accumulated `HashMap` for Java).
+///
+/// The shared storage and write-filtering logic that both backends need
+/// lives in [`ChunkStore`]; each backend embeds one and delegates to it.
+/// The trait deliberately does *not* expose a `store()` accessor so test
+/// doubles can keep using whatever in-memory representation makes them the
+/// strongest independent oracle.
 pub trait WorldWriter {
     /// Set a block at absolute (x, y, z) world coordinates.
     fn set_block(&mut self, x: i32, y: i32, z: i32, block: Block);
@@ -145,7 +381,17 @@ pub trait WorldWriter {
     /// Insert a pre-built [`ChunkData`] at chunk coordinates (cx, cz).
     fn insert_chunk(&mut self, cx: i32, cz: i32, chunk: ChunkData);
 
-    /// Add a block-entity NBT blob at the given world coordinates.
+    /// Add a pre-encoded block-entity NBT blob for the block at `(x, y, z)`.
+    ///
+    /// **Coordinate contract (QA-013):** `x` and `z` are used to bucket the
+    /// blob into the owning chunk's entity list; `y` is intentionally *not*
+    /// used as a key at this layer. The writer's per-chunk entity list mixes
+    /// all Y values, and each blob already encodes its full `(x, y, z)`
+    /// position inside the NBT payload (see e.g.
+    /// `encode_sign_block_entity` in `pipeline/render`). Accepting `y` in the
+    /// signature preserves the symmetric `(x, y, z)` coordinate triple used
+    /// by every other `WorldWriter` setter and reserves room for a future
+    /// per-Y entity index without a breaking trait change.
     fn add_block_entity(&mut self, x: i32, y: i32, z: i32, nbt: Vec<u8>);
 
     /// Set the sign direction (0-15) for a sign block at world coordinates.
@@ -217,8 +463,9 @@ pub trait WorldWriter {
 //   - Worst case per chunk: 98_304 + 1_536 ≈ 100 KB. Realistic chunks
 //     (5–10 sub-chunks around the surface) are ~25–60 KB; we use the
 //     worst-case bound for the guardrail.
-//   - `JavaWorld::chunks: HashMap<(i32,i32), ChunkData>` adds ~64 bytes
-//     per entry of map overhead, negligible at the per-chunk scale.
+//   - `JavaWorld`'s embedded `ChunkStore` (whose `chunks` field is
+//     `HashMap<(i32,i32), ChunkData>`) adds ~64 bytes per entry of map
+//     overhead, negligible at the per-chunk scale.
 //
 // At the default budget of 1.5 GB this permits ~15_000 chunks (a
 // ~120 × 120 chunk area, ≈ 2 km × 2 km at scale 1.0) — comfortable for
@@ -562,5 +809,158 @@ mod tests {
         assert!(enforce_java_memory_budget(Edition::Java, max_allowed + 1).is_err());
         // ~15_000 chunks per the docstring.
         assert_eq!(max_allowed, 15_360);
+    }
+
+    // ── ChunkStore (QA-001) ──────────────────────────────────────────────
+    //
+    // `ChunkStore` is now the single implementation of the storage + bounds
+    // + auxiliary-map operations both backends used to duplicate. These
+    // tests pin the behaviours Bedrock's streaming `flush_tile` and both
+    // backends' `save` paths rely on. They also pin the QA-013 contract:
+    // `add_block_entity` buckets by `(x, z)` only, never by `y`.
+
+    #[test]
+    fn chunkstore_new_starts_empty_and_unbounded() {
+        let s = ChunkStore::new();
+        assert_eq!(s.chunk_count(), 0);
+        assert!(s.occupied_chunks().is_empty());
+        assert!(s.surface_blocks().is_empty());
+        // Unbounded means any chunk is accepted.
+        assert!(s.in_bounds(0, 0));
+        assert!(s.in_bounds(123, -456));
+    }
+
+    #[test]
+    fn chunkstore_new_bounded_rejects_writes_outside_rectangle() {
+        let mut s = ChunkStore::new_bounded(0, 0, 0, 0);
+        s.set_block(0, 65, 0, Block::Stone); // chunk (0,0) — inside
+        s.set_block(16, 65, 0, Block::Stone); // chunk (1,0) — outside
+        s.set_block(0, 65, 16, Block::Stone); // chunk (0,1) — outside
+        assert_eq!(s.chunk_count(), 1);
+        assert_eq!(s.get_block(0, 65, 0), Block::Stone);
+        assert_eq!(s.get_block(16, 65, 0), Block::Air);
+    }
+
+    #[test]
+    fn chunkstore_set_tile_bounds_updates_active_rectangle() {
+        // Bedrock's streaming `set_tile_bounds` override delegates here; the
+        // rectangle must actually flip which writes are accepted.
+        let mut s = ChunkStore::new();
+        assert!(s.in_bounds(5, 5));
+        s.set_tile_bounds(0, 0, 0, 0);
+        assert!(!s.in_bounds(5, 5));
+        assert!(s.in_bounds(0, 0));
+    }
+
+    #[test]
+    fn chunkstore_insert_chunk_round_trips_through_get_block() {
+        // The parallel terrain-fill path builds chunks independently and
+        // merges them via `insert_chunk`; get_block must observe the data.
+        let mut s = ChunkStore::new();
+        let mut chunk = ChunkData::new();
+        chunk.set(3, 70, 4, Block::Cobblestone);
+        s.insert_chunk(2, 2, chunk);
+        // World coord = chunk*16 + local.
+        assert_eq!(s.get_block(2 * 16 + 3, 70, 2 * 16 + 4), Block::Cobblestone);
+        assert_eq!(s.chunk_count(), 1);
+        assert_eq!(s.occupied_chunks(), vec![(2, 2)]);
+    }
+
+    #[test]
+    fn chunkstore_add_block_entity_buckets_by_xz_ignores_y() {
+        // QA-013 contract: entities at the same (x, z) but different y must
+        // share one bucket (the writer keys only by chunk; the y position
+        // is encoded inside the NBT payload by callers).
+        let mut s = ChunkStore::new();
+        s.add_block_entity(5, 65, 7, vec![0xAA]);
+        s.add_block_entity(5, 70, 7, vec![0xBB]); // same chunk, different y
+        s.add_block_entity(20, 65, 7, vec![0xCC]); // different chunk
+        let buckets = s.block_entities();
+        assert_eq!(buckets.len(), 2, "two distinct chunk buckets expected");
+        // Same-(x,z) bucket holds both blobs in insertion order.
+        let shared = buckets
+            .get(&(0, 0))
+            .expect("entities at (5,7) and (5,7) share chunk (0,0)");
+        assert_eq!(*shared, vec![vec![0xAA], vec![0xBB]]);
+        let other = buckets
+            .get(&(1, 0))
+            .expect("entity at (20,7) lands in chunk (1,0)");
+        assert_eq!(*other, vec![vec![0xCC]]);
+    }
+
+    #[test]
+    fn chunkstore_add_block_entity_respects_bounds() {
+        let mut s = ChunkStore::new_bounded(0, 0, 0, 0);
+        s.add_block_entity(0, 65, 0, vec![0x11]); // inside
+        s.add_block_entity(16, 65, 0, vec![0x22]); // outside
+        assert_eq!(s.block_entities().len(), 1);
+        assert!(s.block_entities().contains_key(&(0, 0)));
+    }
+
+    #[test]
+    fn chunkstore_override_maps_round_trip() {
+        let mut s = ChunkStore::new();
+        s.set_sign_direction(1, 65, 2, 7);
+        s.set_block_direction(3, 66, 4, 5);
+        assert_eq!(s.sign_directions().get(&(1, 65, 2)), Some(&7));
+        assert_eq!(s.block_directions().get(&(3, 66, 4)), Some(&5));
+        // Defaults to 0 when absent (mirrors the encoder's lookup).
+        assert_eq!(s.sign_directions().get(&(9, 9, 9)), None);
+    }
+
+    #[test]
+    fn chunkstore_surface_blocks_picks_topmost_non_air_per_column() {
+        let mut s = ChunkStore::new();
+        s.set_block(0, 60, 0, Block::Dirt);
+        s.set_block(0, 65, 0, Block::GrassBlock); // higher — must win
+        s.set_block(0, 62, 0, Block::Stone);
+        s.set_block(5, 70, 5, Block::Sand);
+        let mut surfaces = s.surface_blocks();
+        surfaces.sort_by_key(|t| (t.0, t.1, t.2));
+        assert_eq!(
+            surfaces,
+            vec![
+                (0, 0, 65, format!("{:?}", Block::GrassBlock)),
+                (5, 5, 70, format!("{:?}", Block::Sand)),
+            ]
+        );
+    }
+
+    #[test]
+    fn chunkstore_take_chunks_then_clear_aux_is_the_flush_drain_contract() {
+        // Bedrock's `drain_chunks_to_writer` does `take_chunks` then writes
+        // each entry, then `clear_aux`. After that the store must be empty
+        // and ready for the next tile.
+        let mut s = ChunkStore::new();
+        s.set_block(0, 65, 0, Block::Stone);
+        s.add_block_entity(0, 65, 0, vec![0xAB]);
+        s.set_sign_direction(0, 65, 0, 3);
+        s.set_block_direction(0, 65, 0, 2);
+
+        let drained = s.take_chunks();
+        assert_eq!(drained.len(), 1);
+        // Chunks are now empty in the store, but aux maps survive until
+        // `clear_aux` runs — matching the order Bedrock's drain uses
+        // (it reads aux maps while writing each drained chunk).
+        assert_eq!(s.chunks().len(), 0);
+        assert_eq!(s.block_entities().len(), 1);
+        assert_eq!(s.sign_directions().len(), 1);
+        assert_eq!(s.block_directions().len(), 1);
+
+        s.clear_aux();
+        assert!(s.block_entities().is_empty());
+        assert!(s.sign_directions().is_empty());
+        assert!(s.block_directions().is_empty());
+        assert_eq!(s.chunk_count(), 0);
+    }
+
+    #[test]
+    fn chunkstore_default_matches_new() {
+        // `ChunkStore: Default` is what `ChunkData::entry().or_default()`
+        // style code paths rely on; it must produce an unbounded empty store.
+        let d = ChunkStore::default();
+        assert_eq!(d.chunk_count(), 0);
+        assert!(d.in_bounds(0, 0));
+        assert!(d.in_bounds(999, -999));
     }
 }

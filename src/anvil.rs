@@ -16,7 +16,7 @@
 use crate::{
     blocks::{Block, surface_to_java_biome},
     nbt_be::{self, TAG_COMPOUND, TAG_STRING},
-    world::{ChunkData, MAX_Y, MIN_Y, WorldWriter},
+    world::{ChunkData, ChunkStore, MAX_Y, MIN_Y, WorldWriter},
 };
 use anyhow::{Context, Result};
 use flate2::{Compression, write::GzEncoder, write::ZlibEncoder};
@@ -29,45 +29,24 @@ use std::path::{Path, PathBuf};
 /// Accumulates chunk data in memory, then writes a Java Edition world
 /// using Anvil region files.
 pub struct JavaWorld {
-    chunks: HashMap<(i32, i32), ChunkData>,
+    /// Shared chunk grid + auxiliary override maps + optional tile bounds.
+    /// Common to both backends; see [`ChunkStore`].
+    store: ChunkStore,
     output: PathBuf,
-    block_entities: HashMap<(i32, i32), Vec<Vec<u8>>>,
-    sign_directions: HashMap<(i32, i32, i32), i32>,
-    block_directions: HashMap<(i32, i32, i32), i32>,
-    chunk_bounds: Option<(i32, i32, i32, i32)>,
 }
 
 impl JavaWorld {
     pub fn new(output: &Path) -> Self {
         Self {
-            chunks: HashMap::new(),
+            store: ChunkStore::new(),
             output: output.to_path_buf(),
-            block_entities: HashMap::new(),
-            sign_directions: HashMap::new(),
-            block_directions: HashMap::new(),
-            chunk_bounds: None,
         }
     }
 
     pub fn new_bounded(output: &Path, min_cx: i32, max_cx: i32, min_cz: i32, max_cz: i32) -> Self {
         Self {
-            chunks: HashMap::new(),
+            store: ChunkStore::new_bounded(min_cx, max_cx, min_cz, max_cz),
             output: output.to_path_buf(),
-            block_entities: HashMap::new(),
-            sign_directions: HashMap::new(),
-            block_directions: HashMap::new(),
-            chunk_bounds: Some((min_cx, max_cx, min_cz, max_cz)),
-        }
-    }
-
-    /// Return `true` if (cx, cz) falls within the optional chunk bounds.
-    #[inline]
-    fn in_bounds(&self, cx: i32, cz: i32) -> bool {
-        match self.chunk_bounds {
-            None => true,
-            Some((min_cx, max_cx, min_cz, max_cz)) => {
-                cx >= min_cx && cx <= max_cx && cz >= min_cz && cz <= max_cz
-            }
         }
     }
 
@@ -82,17 +61,19 @@ impl JavaWorld {
         let region_dir = self.output.join("region");
         std::fs::create_dir_all(&region_dir)?;
 
+        let chunks = self.store.chunks();
+
         // Group chunks into 32x32 regions
         let mut regions: HashMap<(i32, i32), Vec<(i32, i32)>> = HashMap::new();
-        for &(cx, cz) in self.chunks.keys() {
+        for &(cx, cz) in chunks.keys() {
             let rx = cx.div_euclid(32);
             let rz = cz.div_euclid(32);
             regions.entry((rx, rz)).or_default().push((cx, cz));
         }
 
-        for (&(rx, rz), chunks) in &regions {
+        for (&(rx, rz), region_chunks) in &regions {
             let path = region_dir.join(format!("r.{rx}.{rz}.mca"));
-            let data = encode_region(chunks, &self.chunks, &self.block_entities)?;
+            let data = encode_region(region_chunks, chunks, self.store.block_entities())?;
             std::fs::write(&path, &data).with_context(|| format!("writing {}", path.display()))?;
         }
 
@@ -112,87 +93,39 @@ impl JavaWorld {
 
 impl WorldWriter for JavaWorld {
     fn set_block(&mut self, x: i32, y: i32, z: i32, block: Block) {
-        let cx = x.div_euclid(16);
-        let cz = z.div_euclid(16);
-        if !self.in_bounds(cx, cz) {
-            return;
-        }
-        let lx = x.rem_euclid(16);
-        let lz = z.rem_euclid(16);
-        self.chunks
-            .entry((cx, cz))
-            .or_default()
-            .set(lx, y, lz, block);
+        self.store.set_block(x, y, z, block)
     }
 
     fn get_block(&self, x: i32, y: i32, z: i32) -> Block {
-        let cx = x.div_euclid(16);
-        let cz = z.div_euclid(16);
-        let lx = x.rem_euclid(16);
-        let lz = z.rem_euclid(16);
-        self.chunks
-            .get(&(cx, cz))
-            .map(|chunk| chunk.get(lx, y, lz))
-            .unwrap_or(Block::Air)
+        self.store.get_block(x, y, z)
     }
 
     fn insert_chunk(&mut self, cx: i32, cz: i32, chunk: ChunkData) {
-        self.chunks.insert((cx, cz), chunk);
+        self.store.insert_chunk(cx, cz, chunk)
     }
 
-    fn add_block_entity(&mut self, x: i32, _y: i32, z: i32, nbt: Vec<u8>) {
-        let cx = x.div_euclid(16);
-        let cz = z.div_euclid(16);
-        if !self.in_bounds(cx, cz) {
-            return;
-        }
-        self.block_entities.entry((cx, cz)).or_default().push(nbt);
+    fn add_block_entity(&mut self, x: i32, y: i32, z: i32, nbt: Vec<u8>) {
+        self.store.add_block_entity(x, y, z, nbt)
     }
 
     fn set_sign_direction(&mut self, x: i32, y: i32, z: i32, direction: i32) {
-        let cx = x.div_euclid(16);
-        let cz = z.div_euclid(16);
-        if !self.in_bounds(cx, cz) {
-            return;
-        }
-        self.sign_directions.insert((x, y, z), direction);
+        self.store.set_sign_direction(x, y, z, direction)
     }
 
     fn set_block_direction(&mut self, x: i32, y: i32, z: i32, direction: i32) {
-        let cx = x.div_euclid(16);
-        let cz = z.div_euclid(16);
-        if !self.in_bounds(cx, cz) {
-            return;
-        }
-        self.block_directions.insert((x, y, z), direction);
+        self.store.set_block_direction(x, y, z, direction)
     }
 
     fn chunk_count(&self) -> usize {
-        self.chunks.len()
+        self.store.chunk_count()
     }
 
     fn occupied_chunks(&self) -> Vec<(i32, i32)> {
-        self.chunks.keys().copied().collect()
+        self.store.occupied_chunks()
     }
 
     fn surface_blocks(&self) -> Vec<(i32, i32, i32, String)> {
-        let mut result = Vec::new();
-        for (&(cx, cz), chunk) in &self.chunks {
-            for lx in 0..16i32 {
-                for lz in 0..16i32 {
-                    let wx = cx * 16 + lx;
-                    let wz = cz * 16 + lz;
-                    for y in (MIN_Y..=MAX_Y).rev() {
-                        let b = chunk.get(lx, y, lz);
-                        if b != Block::Air {
-                            result.push((wx, wz, y, format!("{:?}", b)));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        result
+        self.store.surface_blocks()
     }
 
     fn save(&mut self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
