@@ -7,11 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 52 of 58 audit issues resolved._
+
+### Security
+- Opt-in shared-secret auth on the HTTP API via `--api-key` / `OSM_TO_BEDROCK_API_KEY` (constant-time compare), checked on all routes except `/health`. The server now refuses to bind a non-loopback address (e.g. `--host 0.0.0.0`) without a key unless `OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1` is set.
+- `/status` and `/download` no longer leak verbatim error chains or OS strings to clients; full detail is logged server-side only.
+- `Content-Security-Policy` header on the Next.js frontend (`connect-src 'self'`; all external calls are server-side proxied).
+- `validate_bbox` (±90/±180 + max block-extent span) enforced on fetch/terrain/preview endpoints before the concurrency semaphore.
+- Explicit 1 MiB body limit on JSON routes; client errors now return 400 instead of 500.
+- Mutex-poisoning recovery — a panicked background job no longer crashes the API server on the next request.
+
 ### Added
 - `docs/DEPLOYMENT.md` — Docker, reverse-proxy, and self-hosting guide (ports, environment variables, and the auth requirement that applies to non-loopback binds).
+- Test net for the previously-untested orchestrator: `ChunkData` round-trip tests, a `RecordingWorld` `render_osm_features` integration test, cross-edition Bedrock↔Java parity tests, and `params`/`nbt` coverage (Rust tests 163 → 254).
+- `vitest` web test suite (api-config + `useConversion` polling state machine) with a CI step and a `web-test` Make target (web tests 0 → 21).
+- `proxyToRust` helper centralising the Next.js→Rust proxy routes (routes dir −34% LOC).
+- `AbortController` cleanup in `useConversion` so polling stops on unmount.
+
+### Changed
+- **Java Edition OOM guard** — `edition=java` conversions that would exceed a 1.5 GB / ~15k-chunk memory budget are now refused before allocation, instead of accumulating the whole world in RAM (Bedrock already streams tile-by-tile). The full streaming Java writer remains future work.
+- Deduped the Bedrock/Java tile loop via a `process_tile` helper + `WorldWriter::flush_tile()`; the outer loop is now edition-agnostic.
+- Split `src/pipeline.rs` (2591 LOC) → `src/pipeline/{mod,render,terrain,preview,decoration,util}.rs`.
+- Split `src/server.rs` (3127 LOC) → `src/server/{mod,state,error,auth,options,handlers}.rs`; extracted a shared `spawn_conversion_job` helper.
+- Split `src/main.rs` (1254 LOC) → `src/cli/` module; the binary is now a 16-line shim.
+- Extracted a shared `ChunkStore` struct used by both `BedrockWorld` and `JavaWorld` (−196 duplicated lines).
+- Extracted 11 per-layer `render_*` helpers from `render_osm_features` (558 → 34 LOC orchestrator).
+- `NEXT_PUBLIC_API_URL` renamed to server-only `RUST_API_URL` (browser code never read it; the value is no longer baked into the client bundle).
+- `par-osm-rust` pinned to `=0.1.1`; the seven re-export shim modules are now documented as such.
+- Documentation synced to the post-refactor reality (`CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, `docs/DEVELOPER_INFO.md`, `docs/CLI.md`, `docs/WEB_UI.md`, `CONTRIBUTING.md`).
 
 ### Removed
 - Stale graphify git hooks (`.githooks/post-commit`, `.githooks/post-checkout`) — graphify integration was removed from settings/gitignore/CLAUDE.md in 0.8.0 but the local hook files were left behind, silently re-enabling the integration when `make install-hooks` was run. The `pre-commit` hook (fmt + clippy + test) is unaffected and remains the only hook `install-hooks` configures.
+- Truly-dead code flagged by the `#[allow(dead_code)]` audit (3 stale markers + 1 unused function); remaining markers carry intent comments.
 
 ---
 
