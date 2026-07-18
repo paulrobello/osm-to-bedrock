@@ -307,12 +307,7 @@ export default function Home() {
       </div>
 
       {/* Conversion history */}
-      <HistoryPanel
-        history={history}
-        onLoadSettings={(_entry) => {
-          // TODO: restore settings from history entry
-        }}
-      />
+      <HistoryPanel history={history} />
     </>
   );
 

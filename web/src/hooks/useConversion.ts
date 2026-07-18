@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import type { FeatureFilter } from '@/lib/overpass';
 
 export type ConversionState = 'idle' | 'uploading' | 'converting' | 'done' | 'error';
@@ -76,6 +76,21 @@ export interface UseConversionReturn {
 }
 
 const POLL_INTERVAL_MS = 2_000;
+/** Per-poll network timeout. The fetch is also tied to the active AbortController so reset()/unmount cancels it. */
+const POLL_TIMEOUT_MS = 10_000;
+
+interface RunConversionJobOpts {
+  /** Status string shown during the upload/fetch phase (e.g. 'uploading', 'fetching'). */
+  uploadStatus: string;
+  /** User-facing message shown during the upload/fetch phase. */
+  uploadMessage: string;
+  /** Message shown once the job is accepted and polling begins. */
+  convertingMessage: string;
+  /** Fallback error message when the underlying error is not an Error instance. */
+  errorFallback: string;
+  /** Optional callback fired after the converting transition but before polling begins. */
+  onJobCreated?: (jobId: string) => void;
+}
 
 export function useConversion(): UseConversionReturn {
   const [conversionState, setConversionState] = useState<ConversionState>('idle');
@@ -117,6 +132,21 @@ export function useConversion(): UseConversionReturn {
     setDownloadFilename('world.mcworld');
   }, [stopPolling]);
 
+  // QA-010: cancel any in-flight poll/upload and clear the pending timer on unmount so we never
+  // call setState on an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current !== null) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+    };
+  }, []);
+
   const downloadFile = useCallback(async (url: string) => {
     setIsDownloading(true);
     setDownloadProgress(0);
@@ -125,7 +155,10 @@ export function useConversion(): UseConversionReturn {
       const res = await fetch(url);
       const total = parseInt(res.headers.get('content-length') || '0');
       setDownloadTotal(total);
-      const reader = res.body!.getReader();
+      if (!res.body) {
+        throw new Error('Download response has no body');
+      }
+      const reader = res.body.getReader();
       const chunks: Uint8Array[] = [];
       let received = 0;
       while (true) {
@@ -152,11 +185,15 @@ export function useConversion(): UseConversionReturn {
   }, []);
 
   const pollStatus = useCallback(
-    (jobId: string) => {
+    (jobId: string, signal: AbortSignal) => {
       const poll = async () => {
+        if (signal.aborted) return;
         try {
+          // Combine the long-lived controller signal with a per-request timeout so that either
+          // reset()/unmount (controller) or a hung status endpoint (timeout) cancels the fetch.
+          const combined = AbortSignal.any([signal, AbortSignal.timeout(POLL_TIMEOUT_MS)]);
           const res = await fetch(`/api/status/${encodeURIComponent(jobId)}`, {
-            signal: AbortSignal.timeout(10_000),
+            signal: combined,
           });
 
           if (!res.ok) {
@@ -188,6 +225,11 @@ export function useConversion(): UseConversionReturn {
             pollTimerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
           }
         } catch (err: unknown) {
+          // Silent on intentional abort (reset or unmount) — don't touch state.
+          if (signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+            stopPolling();
+            return;
+          }
           stopPolling();
           const msg = err instanceof Error ? err.message : 'Polling failed';
           setError(msg);
@@ -200,14 +242,17 @@ export function useConversion(): UseConversionReturn {
     [stopPolling, downloadFile]
   );
 
-  const startConversion = useCallback(
-    async (file: File | null, options: ConvertOptions) => {
-      if (!file) {
-        setError('No file selected');
-        setConversionState('error');
-        return;
-      }
-
+  /**
+   * Owns the shared start → poll → terminal-transition flow used by every conversion method.
+   * Each public method just builds its request body and delegates here.
+   */
+  const runConversionJob = useCallback(
+    async (
+      url: string,
+      body: BodyInit,
+      opts: RunConversionJobOpts,
+      headers?: Record<string, string>
+    ) => {
       // Clean up any previous run
       stopPolling();
       if (abortRef.current) {
@@ -218,8 +263,8 @@ export function useConversion(): UseConversionReturn {
 
       setConversionState('uploading');
       setProgress(0);
-      setStatus('uploading');
-      setMessage('Uploading file…');
+      setStatus(opts.uploadStatus);
+      setMessage(opts.uploadMessage);
       setError(null);
       setDownloadUrl(null);
       setDownloadProgress(0);
@@ -227,39 +272,10 @@ export function useConversion(): UseConversionReturn {
       setIsDownloading(false);
 
       try {
-        const form = new FormData();
-        form.append('file', file);
-        // Rust expects snake_case field names
-        form.append('options', JSON.stringify({
-          world_name: options.worldName,
-          scale: options.scale,
-          building_height: options.buildingHeight,
-          sea_level: options.seaLevel,
-          signs: options.signs,
-          address_signs: options.addressSigns,
-          poi_markers: options.poiMarkers,
-          spawn_x: options.spawnX,
-          spawn_y: options.spawnY,
-          spawn_z: options.spawnZ,
-          spawn_lat: options.spawnLat,
-          spawn_lon: options.spawnLon,
-          roads: options.filter?.roads ?? true,
-          buildings: options.filter?.buildings ?? true,
-          water: options.filter?.water ?? true,
-          landuse: options.filter?.landuse ?? true,
-          railways: options.filter?.railways ?? true,
-          use_elevation: options.useElevation ?? false,
-          vertical_scale: options.verticalScale ?? 1.0,
-          elevation_smoothing: options.elevationSmoothing ?? 1,
-          surface_thickness: options.surfaceThickness ?? 4,
-          wall_straighten_threshold: options.wallStraightenThreshold ?? 1,
-          poi_decorations: options.poiDecorations ?? true,
-          nature_decorations: options.natureDecorations ?? true,
-        }));
-
-        const res = await fetch('/api/convert', {
+        const res = await fetch(url, {
           method: 'POST',
-          body: form,
+          body,
+          headers,
           signal: controller.signal,
         });
 
@@ -277,16 +293,17 @@ export function useConversion(): UseConversionReturn {
 
         setConversionState('converting');
         setStatus('converting');
-        setMessage('Converting…');
+        setMessage(opts.convertingMessage);
         setProgress(0);
 
-        pollStatus(data.job_id);
+        opts.onJobCreated?.(data.job_id);
+        pollStatus(data.job_id, controller.signal);
       } catch (err: unknown) {
         if (err instanceof Error && err.name === 'AbortError') {
           // Intentionally aborted — reset() was called
           return;
         }
-        const msg = err instanceof Error ? err.message : 'Conversion failed';
+        const msg = err instanceof Error ? err.message : opts.errorFallback;
         setError(msg);
         setConversionState('error');
       }
@@ -294,235 +311,177 @@ export function useConversion(): UseConversionReturn {
     [stopPolling, pollStatus]
   );
 
+  const startConversion = useCallback(
+    async (file: File | null, options: ConvertOptions) => {
+      if (!file) {
+        setError('No file selected');
+        setConversionState('error');
+        return;
+      }
+
+      const form = new FormData();
+      form.append('file', file);
+      // Rust expects snake_case field names
+      form.append('options', JSON.stringify({
+        world_name: options.worldName,
+        scale: options.scale,
+        building_height: options.buildingHeight,
+        sea_level: options.seaLevel,
+        signs: options.signs,
+        address_signs: options.addressSigns,
+        poi_markers: options.poiMarkers,
+        spawn_x: options.spawnX,
+        spawn_y: options.spawnY,
+        spawn_z: options.spawnZ,
+        spawn_lat: options.spawnLat,
+        spawn_lon: options.spawnLon,
+        roads: options.filter?.roads ?? true,
+        buildings: options.filter?.buildings ?? true,
+        water: options.filter?.water ?? true,
+        landuse: options.filter?.landuse ?? true,
+        railways: options.filter?.railways ?? true,
+        use_elevation: options.useElevation ?? false,
+        vertical_scale: options.verticalScale ?? 1.0,
+        elevation_smoothing: options.elevationSmoothing ?? 1,
+        surface_thickness: options.surfaceThickness ?? 4,
+        wall_straighten_threshold: options.wallStraightenThreshold ?? 1,
+        poi_decorations: options.poiDecorations ?? true,
+        nature_decorations: options.natureDecorations ?? true,
+      }));
+
+      await runConversionJob('/api/convert', form, {
+        uploadStatus: 'uploading',
+        uploadMessage: 'Uploading file…',
+        convertingMessage: 'Converting…',
+        errorFallback: 'Conversion failed',
+      });
+    },
+    [runConversionJob]
+  );
+
   const startFetchConvert = useCallback(
     async (bbox: [number, number, number, number], options: ConvertOptions) => {
-      stopPolling();
-      if (abortRef.current) abortRef.current.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
-
-      setConversionState('uploading');
-      setProgress(0);
-      setStatus('fetching');
-      setMessage('Fetching from Overpass…');
-      setError(null);
-      setDownloadUrl(null);
-      setDownloadProgress(0);
-      setDownloadTotal(0);
-      setIsDownloading(false);
-
-      try {
-        const body = {
-          bbox,
-          options: {
-            world_name: options.worldName,
-            scale: options.scale,
-            building_height: options.buildingHeight,
-            sea_level: options.seaLevel,
-            signs: options.signs,
-            address_signs: options.addressSigns,
-            poi_markers: options.poiMarkers,
-            spawn_lat: options.spawnLat,
-            spawn_lon: options.spawnLon,
-            spawn_x: options.spawnX,
-            spawn_y: options.spawnY,
-            spawn_z: options.spawnZ,
-            use_elevation: options.useElevation ?? false,
-            vertical_scale: options.verticalScale ?? 1.0,
-            elevation_smoothing: options.elevationSmoothing ?? 1,
-            surface_thickness: options.surfaceThickness ?? 4,
-            wall_straighten_threshold: options.wallStraightenThreshold ?? 1,
+      const body = {
+        bbox,
+        options: {
+          world_name: options.worldName,
+          scale: options.scale,
+          building_height: options.buildingHeight,
+          sea_level: options.seaLevel,
+          signs: options.signs,
+          address_signs: options.addressSigns,
+          poi_markers: options.poiMarkers,
+          spawn_lat: options.spawnLat,
+          spawn_lon: options.spawnLon,
+          spawn_x: options.spawnX,
+          spawn_y: options.spawnY,
+          spawn_z: options.spawnZ,
+          use_elevation: options.useElevation ?? false,
+          vertical_scale: options.verticalScale ?? 1.0,
+          elevation_smoothing: options.elevationSmoothing ?? 1,
+          surface_thickness: options.surfaceThickness ?? 4,
+          wall_straighten_threshold: options.wallStraightenThreshold ?? 1,
           poi_decorations: options.poiDecorations ?? true,
           nature_decorations: options.natureDecorations ?? true,
-          },
-          filter: options.filter ?? {
-            roads: true, buildings: true, water: true, landuse: true, railways: true,
-          },
-          ...(options.overpassUrl ? { overpass_url: options.overpassUrl } : {}),
-          overture: options.overture ?? false,
-          overture_themes: options.overtureThemes ?? [],
-          overture_priority: options.overturePriority ?? {},
-          overture_timeout: options.overtureTimeout ?? 120,
-        };
+        },
+        filter: options.filter ?? {
+          roads: true, buildings: true, water: true, landuse: true, railways: true,
+        },
+        ...(options.overpassUrl ? { overpass_url: options.overpassUrl } : {}),
+        overture: options.overture ?? false,
+        overture_themes: options.overtureThemes ?? [],
+        overture_priority: options.overturePriority ?? {},
+        overture_timeout: options.overtureTimeout ?? 120,
+      };
 
-        const res = await fetch('/api/fetch-convert', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-
-        if (!res.ok) {
-          const json = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
-          throw new Error(json.error ?? `HTTP ${res.status}`);
-        }
-
-        const data = (await res.json()) as { job_id: string };
-        if (!data.job_id) throw new Error('API response missing job_id');
-
-        setConversionState('converting');
-        setStatus('converting');
-        setMessage('Converting…');
-        setProgress(0);
-        pollStatus(data.job_id);
-      } catch (err: unknown) {
-        if (err instanceof Error && err.name === 'AbortError') return;
-        setError(err instanceof Error ? err.message : 'Fetch-convert failed');
-        setConversionState('error');
-      }
+      await runConversionJob('/api/fetch-convert', JSON.stringify(body), {
+        uploadStatus: 'fetching',
+        uploadMessage: 'Fetching from Overpass…',
+        convertingMessage: 'Converting…',
+        errorFallback: 'Fetch-convert failed',
+      }, { 'Content-Type': 'application/json' });
     },
-    [stopPolling, pollStatus]
+    [runConversionJob]
   );
 
   const startOvertureConvert = useCallback(
     async (bbox: [number, number, number, number], options: ConvertOptions & { themes?: string[] }) => {
-      stopPolling();
-      if (abortRef.current) abortRef.current.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
+      // Frontend bbox is [minLon, minLat, maxLon, maxLat]
+      // Rust API expects [south, west, north, east] = [minLat, minLon, maxLat, maxLon]
+      const [minLon, minLat, maxLon, maxLat] = bbox;
+      const rustBbox: [number, number, number, number] = [minLat, minLon, maxLat, maxLon];
 
-      setConversionState('uploading');
-      setProgress(0);
-      setStatus('fetching');
-      setMessage('Fetching from Overture Maps…');
-      setError(null);
-      setDownloadUrl(null);
-      setDownloadProgress(0);
-      setDownloadTotal(0);
-      setIsDownloading(false);
-
-      try {
-        // Frontend bbox is [minLon, minLat, maxLon, maxLat]
-        // Rust API expects [south, west, north, east] = [minLat, minLon, maxLat, maxLon]
-        const [minLon, minLat, maxLon, maxLat] = bbox;
-        const rustBbox: [number, number, number, number] = [minLat, minLon, maxLat, maxLon];
-
-        const body = {
-          bbox: rustBbox,
-          options: {
-            world_name: options.worldName,
-            scale: options.scale,
-            building_height: options.buildingHeight,
-            sea_level: options.seaLevel,
-            signs: options.signs ?? false,
-            address_signs: options.addressSigns ?? false,
-            poi_markers: options.poiMarkers ?? false,
-            spawn_x: options.spawnX ?? null,
-            spawn_y: options.spawnY ?? null,
-            spawn_z: options.spawnZ ?? null,
-            spawn_lat: options.spawnLat ?? null,
-            spawn_lon: options.spawnLon ?? null,
-            use_elevation: options.useElevation ?? false,
-            vertical_scale: options.verticalScale ?? 1.0,
-            elevation_smoothing: options.elevationSmoothing ?? 1,
-            surface_thickness: options.surfaceThickness ?? 4,
-            wall_straighten_threshold: options.wallStraightenThreshold ?? 1,
+      const body = {
+        bbox: rustBbox,
+        options: {
+          world_name: options.worldName,
+          scale: options.scale,
+          building_height: options.buildingHeight,
+          sea_level: options.seaLevel,
+          signs: options.signs ?? false,
+          address_signs: options.addressSigns ?? false,
+          poi_markers: options.poiMarkers ?? false,
+          spawn_x: options.spawnX ?? null,
+          spawn_y: options.spawnY ?? null,
+          spawn_z: options.spawnZ ?? null,
+          spawn_lat: options.spawnLat ?? null,
+          spawn_lon: options.spawnLon ?? null,
+          use_elevation: options.useElevation ?? false,
+          vertical_scale: options.verticalScale ?? 1.0,
+          elevation_smoothing: options.elevationSmoothing ?? 1,
+          surface_thickness: options.surfaceThickness ?? 4,
+          wall_straighten_threshold: options.wallStraightenThreshold ?? 1,
           poi_decorations: options.poiDecorations ?? true,
           nature_decorations: options.natureDecorations ?? true,
-          },
-          themes: options.themes ?? options.overtureThemes ?? ['building', 'transportation'],
-          timeout: options.overtureTimeout ?? 120,
-        };
+        },
+        themes: options.themes ?? options.overtureThemes ?? ['building', 'transportation'],
+        timeout: options.overtureTimeout ?? 120,
+      };
 
-        const res = await fetch('/api/overture-convert', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
+      const filename = `${options.worldName || 'overture-world'}.mcworld`;
 
-        if (!res.ok) {
-          const json = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
-          throw new Error(json.error ?? `HTTP ${res.status}`);
-        }
-
-        const data = (await res.json()) as { job_id: string };
-        if (!data.job_id) throw new Error('API response missing job_id');
-
-        setConversionState('converting');
-        setStatus('converting');
-        setMessage('Converting Overture data…');
-        setProgress(0);
-
-        const filename = `${options.worldName || 'overture-world'}.mcworld`;
-        setDownloadFilename(filename);
-
-        pollStatus(data.job_id);
-      } catch (err: unknown) {
-        if (err instanceof Error && err.name === 'AbortError') return;
-        setError(err instanceof Error ? err.message : 'Overture-convert failed');
-        setConversionState('error');
-      }
+      await runConversionJob('/api/overture-convert', JSON.stringify(body), {
+        uploadStatus: 'fetching',
+        uploadMessage: 'Fetching from Overture Maps…',
+        convertingMessage: 'Converting Overture data…',
+        errorFallback: 'Overture-convert failed',
+        onJobCreated: () => setDownloadFilename(filename),
+      }, { 'Content-Type': 'application/json' });
     },
-    [stopPolling, pollStatus]
+    [runConversionJob]
   );
 
   const startTerrainConvert = useCallback(
     async (bbox: [number, number, number, number], options: ConvertOptions) => {
-      stopPolling();
-      if (abortRef.current) abortRef.current.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
-
-      setConversionState('uploading');
-      setProgress(0);
-      setStatus('fetching');
-      setMessage('Downloading elevation tiles…');
-      setError(null);
-      setDownloadUrl(null);
-      setDownloadProgress(0);
-      setDownloadTotal(0);
-      setIsDownloading(false);
-
-      try {
-        const body = {
-          bbox,
-          options: {
-            world_name: options.worldName,
-            scale: options.scale,
-            sea_level: options.seaLevel,
-            vertical_scale: options.verticalScale ?? 1.0,
-            elevation_smoothing: options.elevationSmoothing ?? 1,
-            surface_thickness: options.surfaceThickness ?? 4,
-            wall_straighten_threshold: options.wallStraightenThreshold ?? 1,
+      const body = {
+        bbox,
+        options: {
+          world_name: options.worldName,
+          scale: options.scale,
+          sea_level: options.seaLevel,
+          vertical_scale: options.verticalScale ?? 1.0,
+          elevation_smoothing: options.elevationSmoothing ?? 1,
+          surface_thickness: options.surfaceThickness ?? 4,
+          wall_straighten_threshold: options.wallStraightenThreshold ?? 1,
           poi_decorations: options.poiDecorations ?? true,
           nature_decorations: options.natureDecorations ?? true,
-            use_elevation: options.useElevation ?? true,
-            spawn_lat: options.spawnLat,
-            spawn_lon: options.spawnLon,
-            spawn_x: options.spawnX,
-            spawn_y: options.spawnY,
-            spawn_z: options.spawnZ,
-          },
-        };
+          use_elevation: options.useElevation ?? true,
+          spawn_lat: options.spawnLat,
+          spawn_lon: options.spawnLon,
+          spawn_x: options.spawnX,
+          spawn_y: options.spawnY,
+          spawn_z: options.spawnZ,
+        },
+      };
 
-        const res = await fetch('/api/terrain-convert', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-
-        if (!res.ok) {
-          const json = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
-          throw new Error(json.error ?? `HTTP ${res.status}`);
-        }
-
-        const data = (await res.json()) as { job_id: string };
-        if (!data.job_id) throw new Error('API response missing job_id');
-
-        setConversionState('converting');
-        setStatus('converting');
-        setMessage('Generating terrain…');
-        setProgress(0);
-        pollStatus(data.job_id);
-      } catch (err: unknown) {
-        if (err instanceof Error && err.name === 'AbortError') return;
-        setError(err instanceof Error ? err.message : 'Terrain generation failed');
-        setConversionState('error');
-      }
+      await runConversionJob('/api/terrain-convert', JSON.stringify(body), {
+        uploadStatus: 'fetching',
+        uploadMessage: 'Downloading elevation tiles…',
+        convertingMessage: 'Generating terrain…',
+        errorFallback: 'Terrain generation failed',
+      }, { 'Content-Type': 'application/json' });
     },
-    [stopPolling, pollStatus]
+    [runConversionJob]
   );
 
   return {

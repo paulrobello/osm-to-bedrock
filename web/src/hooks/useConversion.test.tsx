@@ -2,11 +2,8 @@
  * Tests for the useConversion polling state machine (ARC-009).
  *
  * Scope: idle → uploading → converting → done/error transitions, polling
- * cadence, terminal-state exit, and manual cleanup via reset().
- *
- * The hook's unmount cleanup gap (no `useEffect` cleanup, so the poll timer
- * continues to fire after unmount) is QA-010 and tracked by the skipped test
- * at the bottom of this file — it is ready to enable once that fix lands.
+ * cadence, terminal-state exit, manual cleanup via reset(), and unmount
+ * cleanup (QA-010).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
@@ -334,13 +331,10 @@ describe('useConversion', () => {
     expect(result.current.error).toBeNull();
   });
 
-  // ---------------------------------------------------------------------------
-  // QA-010 lives here. The hook does not register a useEffect cleanup, so on
-  // unmount the poll timer keeps firing and calls setState on an unmounted
-  // component. Skipping until that fix lands — at which point this test should
-  // pass as written (flip `it.skip` to `it`).
-  // ---------------------------------------------------------------------------
-  it.skip('QA-010: stops polling when the component unmounts', async () => {
+  // QA-010: the hook registers a useEffect cleanup that clears the poll timer
+  // and aborts the in-flight controller on unmount, so no further /api/status/
+  // polls fire after the component is gone.
+  it('QA-010: stops polling when the component unmounts', async () => {
     const fetchMock = makeFetchMock({
       onStart: () => jsonResponse({ job_id: 'job-unmount' }),
       onStatus: () => jsonResponse({ state: 'converting', progress: 50, message: 'half' }),

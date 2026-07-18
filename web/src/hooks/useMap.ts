@@ -470,6 +470,9 @@ export function useMap(): UseMapReturn {
           source.addFeatures(olFeatures);
           counts[layerId] = olFeatures.length;
         } catch (err) {
+          // Diagnostic only — a malformed GeoJSON feature shouldn't abort loading the rest of
+          // the layer. useMap has no error-state surface; surfacing this in the UI would require
+          // threading a notification channel through every call site for a rare parse failure.
           console.error(`Failed to create ${layerId} features:`, err);
         }
       }
