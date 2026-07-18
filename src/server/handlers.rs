@@ -52,9 +52,7 @@ use super::options::{
     parse_fetch_convert_source_options, validate_bbox, validate_convert_options,
     validate_fetch_convert_options, validate_terrain_convert_options,
 };
-use super::state::{
-    AppState, JobState, Jobs, lock_jobs, sanitize_world_name, set_job_error, zip_and_persist,
-};
+use super::state::{AppState, JobState, Jobs, sanitize_world_name, set_job_error, zip_and_persist};
 
 // ── Job-control helpers (QA-004) ───────────────────────────────────────────
 
@@ -76,16 +74,13 @@ where
         anyhow::anyhow!("server is busy — too many concurrent conversions; retry later")
     })?;
     let job_id = Uuid::new_v4().to_string();
-    {
-        let mut jobs = lock_jobs(&state.jobs);
-        jobs.insert(
-            job_id.clone(),
-            JobState::Running {
-                progress: 0.0,
-                message: "Queued".to_string(),
-            },
-        );
-    }
+    state.jobs.insert(
+        job_id.clone(),
+        JobState::Running {
+            progress: 0.0,
+            message: "Queued".to_string(),
+        },
+    );
     let jobs = state.jobs.clone();
     let jid = job_id.clone();
     tokio::task::spawn_blocking(move || {
@@ -485,8 +480,7 @@ pub(crate) async fn convert_handler(
         let jid_for_progress = jid.clone();
 
         let result = run_conversion(&params, &|progress, msg| {
-            let mut map = lock_jobs(&jobs_for_progress);
-            map.insert(
+            jobs_for_progress.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
                     progress,
@@ -819,8 +813,7 @@ pub(crate) async fn fetch_convert_handler(
             bbox,
             &source_options,
             &mut |progress, msg| {
-                let mut map = lock_jobs(&jobs_fetch);
-                map.insert(
+                jobs_fetch.insert(
                     jid_fetch.clone(),
                     JobState::Running {
                         progress: progress * 0.3,
@@ -906,8 +899,7 @@ pub(crate) async fn fetch_convert_handler(
         let jid_for_progress = jid.clone();
 
         let result = crate::pipeline::run_conversion_from_data(data, &params, &|progress, msg| {
-            let mut map = lock_jobs(&jobs_for_progress);
-            map.insert(
+            jobs_for_progress.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
                     progress: fetch_convert_phase_progress(progress, req_use_elevation),
@@ -994,8 +986,7 @@ pub(crate) async fn terrain_convert_handler(
         let jid_for_progress = jid.clone();
 
         let result = run_terrain_only_to_disk(&params, &|progress, msg| {
-            let mut map = lock_jobs(&jobs_for_progress);
-            map.insert(
+            jobs_for_progress.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
                     progress,
@@ -1067,8 +1058,7 @@ pub(crate) async fn overture_convert_handler(
             bbox,
             &overture_params,
             &mut |progress, msg| {
-                let mut map = lock_jobs(&jobs_ov);
-                map.insert(
+                jobs_ov.insert(
                     jid_ov.clone(),
                     JobState::Running {
                         progress: progress * 0.3,
@@ -1156,8 +1146,7 @@ pub(crate) async fn overture_convert_handler(
         let jid_for_progress = jid.clone();
 
         let result = crate::pipeline::run_conversion_from_data(data, &params, &|progress, msg| {
-            let mut map = lock_jobs(&jobs_for_progress);
-            map.insert(
+            jobs_for_progress.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
                     progress: 0.3 + progress * 0.6,
@@ -1187,23 +1176,27 @@ pub(crate) async fn status_handler(
     State(state): State<AppState>,
     axum::extract::Path(job_id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, axum::response::Response> {
-    let jobs = lock_jobs(&state.jobs);
-    match jobs.get(&job_id) {
-        Some(JobState::Running { progress, message }) => Ok(Json(json!({
-            "state": "running",
-            "progress": progress,
-            "message": message,
-        }))),
-        Some(JobState::Done { .. }) => Ok(Json(json!({
-            "state": "done",
-            "progress": 1.0,
-            "message": "Conversion complete",
-        }))),
-        Some(JobState::Error { public_message, .. }) => Ok(Json(json!({
-            "state": "error",
-            "progress": 0.0,
-            "message": public_message,
-        }))),
+    // DashMap `get` returns a sharded read guard; deref it to match on the
+    // borrowed JobState. The guard lives for the match, so the JSON is built
+    // (and any clones taken) before it drops.
+    match state.jobs.get(&job_id) {
+        Some(g) => match &*g {
+            JobState::Running { progress, message } => Ok(Json(json!({
+                "state": "running",
+                "progress": progress,
+                "message": message,
+            }))),
+            JobState::Done { .. } => Ok(Json(json!({
+                "state": "done",
+                "progress": 1.0,
+                "message": "Conversion complete",
+            }))),
+            JobState::Error { public_message, .. } => Ok(Json(json!({
+                "state": "error",
+                "progress": 0.0,
+                "message": public_message,
+            }))),
+        },
         None => Err((
             axum::http::StatusCode::NOT_FOUND,
             Json(json!({ "error": "unknown job ID" })),
@@ -1218,23 +1211,24 @@ pub(crate) async fn download_handler(
     axum::extract::Path(job_id): axum::extract::Path<String>,
 ) -> Result<axum::response::Response, axum::response::Response> {
     let path = {
-        let jobs = lock_jobs(&state.jobs);
-        match jobs.get(&job_id) {
-            Some(JobState::Done { path, .. }) => path.clone(),
-            Some(JobState::Running { .. }) => {
-                return Err((
-                    axum::http::StatusCode::CONFLICT,
-                    Json(json!({ "error": "conversion still in progress" })),
-                )
-                    .into_response());
-            }
-            Some(JobState::Error { public_message, .. }) => {
-                return Err((
-                    axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({ "error": public_message })),
-                )
-                    .into_response());
-            }
+        match state.jobs.get(&job_id) {
+            Some(g) => match &*g {
+                JobState::Done { path, .. } => path.clone(),
+                JobState::Running { .. } => {
+                    return Err((
+                        axum::http::StatusCode::CONFLICT,
+                        Json(json!({ "error": "conversion still in progress" })),
+                    )
+                        .into_response());
+                }
+                JobState::Error { public_message, .. } => {
+                    return Err((
+                        axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                        Json(json!({ "error": public_message })),
+                    )
+                        .into_response());
+                }
+            },
             None => {
                 return Err((
                     axum::http::StatusCode::NOT_FOUND,
@@ -1331,7 +1325,6 @@ fn download_elevation_for_bbox_mapped(
         max_lon,
         &cache,
         &|i, total: usize, name| {
-            let mut jobs = lock_jobs(jobs);
             jobs.insert(
                 jid.to_string(),
                 JobState::Running {

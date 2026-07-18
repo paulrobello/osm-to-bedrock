@@ -4,11 +4,15 @@
 //! reads and mutates. [`AppState`] is the Axum-shared handle holding the
 //! `Jobs` map plus the concurrency [`Semaphore`](tokio::sync::Semaphore).
 //!
-//! [`lock_jobs`] is the single entry point for acquiring the jobs lock — it
-//! recovers from mutex poisoning (SEC-006) instead of propagating the panic,
-//! so a panicked worker can't take down the API on the next request.
-//! [`set_job_error`] and [`zip_and_persist`] are the only call sites that
-//! should mutate a job's terminal state from a worker thread.
+//! The map is a [`DashMap`] (ARC-010): the `/status` and `/download` handlers
+//! poll it on the read-heavy path while worker threads update progress, and a
+//! single `Mutex<HashMap>` serialised every read against every write. DashMap
+//! shards internally so the two paths no longer block each other. It also
+//! replaces the old `lock_jobs` poisoning-recovery helper (SEC-006): DashMap's
+//! per-shard locks do not poison, so a panicked worker can no longer wedge the
+//! map on the next request — the recovery is now structural rather than
+//! defensive. [`set_job_error`] and [`zip_and_persist`] are the only call
+//! sites that mutate a job's terminal state from a worker thread.
 //!
 //! [`sanitize_world_name`] lives here because the sanitised name flows into
 //! both the on-disk world directory and the `Content-Disposition` header
@@ -16,10 +20,11 @@
 //! reaper that drops stale `Done`/`Error` jobs and deletes their persisted
 //! temp directories.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use dashmap::DashMap;
 
 use crate::pipeline::zip_directory;
 
@@ -49,7 +54,10 @@ pub(crate) enum JobState {
 }
 
 /// Shared application state holding all conversion jobs.
-pub(crate) type Jobs = Arc<Mutex<HashMap<String, JobState>>>;
+///
+/// `DashMap` shards the map so the read-heavy `/status` + `/download` polling
+/// path (ARC-010) does not contend with worker progress writes.
+pub(crate) type Jobs = Arc<DashMap<String, JobState>>;
 
 /// How long completed (Done or Error) jobs are kept in memory before eviction.
 ///
@@ -69,23 +77,6 @@ pub(crate) struct AppState {
     pub(crate) semaphore: Arc<tokio::sync::Semaphore>,
 }
 
-/// Lock the shared jobs map, recovering from mutex poisoning.
-///
-/// If a worker thread panicked while holding the lock, the mutex becomes
-/// "poisoned" and the standard `.lock().expect(...)` would propagate the panic,
-/// taking down the API server on the *next* request. Recovering via
-/// [`PoisonError::into_inner`] keeps the lock usable — at worst, some stale
-/// state from the panicked worker remains visible, but the affected job has
-/// already recorded its own `Error` state and the server stays up.
-pub(crate) fn lock_jobs(jobs: &Jobs) -> std::sync::MutexGuard<'_, HashMap<String, JobState>> {
-    jobs.lock().unwrap_or_else(|poisoned| {
-        log::error!(
-            "jobs mutex was poisoned by a panicked worker — recovering for server stability"
-        );
-        poisoned.into_inner()
-    })
-}
-
 /// Record a terminal error state for `jid` into the jobs map.
 ///
 /// `public_message` is the generic, client-safe string returned from
@@ -99,8 +90,7 @@ pub(crate) fn set_job_error(
     full_error: impl std::fmt::Display,
 ) {
     log::error!("Job {jid} failed: {full_error}");
-    let mut map = lock_jobs(jobs);
-    map.insert(
+    jobs.insert(
         jid.to_string(),
         JobState::Error {
             public_message: public_message.to_string(),
@@ -132,8 +122,7 @@ pub(crate) fn zip_and_persist(
         Ok(()) => {
             let persisted_dir = output_dir.keep();
             let final_path = persisted_dir.join(format!("{world_name}.{extension}"));
-            let mut map = lock_jobs(jobs);
-            map.insert(
+            jobs.insert(
                 jid.to_string(),
                 JobState::Done {
                     path: final_path,
@@ -188,7 +177,7 @@ pub(crate) fn sanitize_world_name(name: &str) -> String {
 
 /// Create application state with a shared jobs map and concurrency semaphore.
 pub(crate) fn build_state() -> (AppState, Jobs) {
-    let jobs: Jobs = Arc::new(Mutex::new(HashMap::new()));
+    let jobs: Jobs = Arc::new(DashMap::new());
     let state = AppState {
         jobs: jobs.clone(),
         semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_JOBS)),
@@ -208,21 +197,17 @@ pub(crate) async fn job_eviction_task(jobs: Jobs) {
         let now = Instant::now();
         let mut to_evict: Vec<(String, PathBuf)> = Vec::new();
 
-        {
-            let guard = lock_jobs(&jobs);
-            for (id, state) in guard.iter() {
-                let (age, path) = match state {
-                    JobState::Done { created, path } => {
-                        (now.duration_since(*created), path.clone())
-                    }
-                    JobState::Error { created, .. } => {
-                        (now.duration_since(*created), PathBuf::new())
-                    }
-                    JobState::Running { .. } => continue,
-                };
-                if age >= JOB_TTL {
-                    to_evict.push((id.clone(), path));
-                }
+        // DashMap `iter()` yields sharded read guards one entry at a time;
+        // collect the eviction list first, then remove in a separate pass so
+        // we never hold a guard across a `remove` on the same shard.
+        for entry in jobs.iter() {
+            let (age, path) = match entry.value() {
+                JobState::Done { created, path } => (now.duration_since(*created), path.clone()),
+                JobState::Error { created, .. } => (now.duration_since(*created), PathBuf::new()),
+                JobState::Running { .. } => continue,
+            };
+            if age >= JOB_TTL {
+                to_evict.push((entry.key().clone(), path));
             }
         }
 
@@ -230,9 +215,8 @@ pub(crate) async fn job_eviction_task(jobs: Jobs) {
             continue;
         }
 
-        let mut guard = lock_jobs(&jobs);
         for (id, path) in to_evict {
-            guard.remove(&id);
+            jobs.remove(&id);
             if path.as_os_str().is_empty() {
                 continue;
             }
@@ -253,8 +237,9 @@ pub(crate) async fn job_eviction_task(jobs: Jobs) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Jobs, lock_jobs, sanitize_world_name};
-    use std::sync::{Arc, Mutex};
+    use super::{JobState, Jobs, sanitize_world_name};
+    use std::sync::Arc;
+    use std::time::Instant;
 
     #[test]
     fn normal_name_passes_through() {
@@ -311,25 +296,54 @@ mod tests {
     }
 
     #[test]
-    fn lock_jobs_recovers_from_poisoned_mutex_instead_of_panicking() {
-        let jobs: Jobs = Arc::new(Mutex::new(std::collections::HashMap::new()));
-        // Simulate a panicked worker by deliberately poisoning the lock.
+    fn dashmap_stays_usable_after_a_worker_thread_panics() {
+        // ARC-010 / SEC-006 successor. With the old `Mutex<HashMap>`, a worker
+        // panicking while holding the lock poisoned it and would have wedged
+        // every subsequent `/status` read until `lock_jobs` recovered. DashMap
+        // shards the map and its shard locks never poison, so a panicked worker
+        // leaves the map fully usable — the recovery is now structural.
+        //
+        // (DashMap does have one footgun this test deliberately avoids: holding
+        // a `get_mut` write-guard and then calling `get` on a key that hashes
+        // to the same shard deadlocks. No production path holds a guard across
+        // another DashMap op, and this test doesn't either.)
+        let jobs: Jobs = Arc::new(dashmap::DashMap::new());
+        jobs.insert(
+            "pre-existing".to_string(),
+            JobState::Done {
+                path: std::path::PathBuf::from("/tmp/x.mcworld"),
+                created: Instant::now(),
+            },
+        );
+
         let jobs_for_panic = jobs.clone();
         let panic_thread = std::thread::spawn(move || {
-            let _guard = jobs_for_panic.lock().unwrap();
-            panic!("simulated worker panic while holding the lock");
+            // Worker inserts a job and then panics — no DashMap guard is held
+            // across the panic.
+            jobs_for_panic.insert(
+                "doomed".to_string(),
+                JobState::Running {
+                    progress: 0.5,
+                    message: "converting".to_string(),
+                },
+            );
+            panic!("simulated worker panic");
         });
         assert!(
             panic_thread.join().is_err(),
-            "sanity: the thread should have panicked"
+            "sanity: the worker thread should have panicked"
         );
 
-        // The mutex is now poisoned. `lock_jobs` must NOT panic — it should
-        // recover the inner map and let the server keep serving requests.
-        let recovered = lock_jobs(&jobs);
-        assert!(
-            recovered.is_empty(),
-            "poison recovery should expose the underlying map"
+        // The map is not poisoned: reads and writes still work.
+        assert!(jobs.get("pre-existing").is_some());
+        assert!(jobs.get("doomed").is_some());
+        jobs.insert(
+            "after-panic".to_string(),
+            JobState::Running {
+                progress: 0.0,
+                message: "queued".to_string(),
+            },
         );
+        assert_eq!(jobs.len(), 3);
     }
 }

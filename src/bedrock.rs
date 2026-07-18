@@ -191,12 +191,11 @@ impl ChunkWriter {
             let mut db = match DB::open(&db_path, opts) {
                 Ok(db) => db,
                 Err(e) => {
-                    // Mutex poisoning is recoverable — recover the guard and
-                    // store the real error for the caller (same pattern as
-                    // `lock_jobs` in `server.rs`). The writer thread is the
-                    // only producer here, so poisoning would only happen if
-                    // this thread itself panicked, in which case we're already
-                    // exiting.
+                    // Mutex poisoning is recoverable — recover the guard via
+                    // `into_inner()` and store the real error for the caller.
+                    // The writer thread is the only producer here, so poisoning
+                    // would only happen if this thread itself panicked, in
+                    // which case we're already exiting.
                     *thread_error_writer
                         .lock()
                         .unwrap_or_else(|p| p.into_inner()) =
