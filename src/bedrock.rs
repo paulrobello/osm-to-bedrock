@@ -371,7 +371,7 @@ impl BedrockWorld {
     }
 
     /// Get the sign direction for a block at world coordinates, defaulting to 0.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // public API: parity with ChunkStore::get_sign_direction for library consumers
     pub fn get_sign_direction(&self, x: i32, y: i32, z: i32) -> i32 {
         self.store.get_sign_direction(x, y, z)
     }

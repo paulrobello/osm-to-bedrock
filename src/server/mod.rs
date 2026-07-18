@@ -106,7 +106,7 @@ fn cleanup_orphaned_temp_dirs() {
 }
 
 /// Build the Axum router with a fresh state and no API key (useful for tests).
-#[allow(dead_code)]
+#[allow(dead_code)] // public API: test helper + library entry for embedding the router without auth
 pub fn build_router() -> Router {
     let (state, _) = build_state();
     build_router_with_state(state, None)

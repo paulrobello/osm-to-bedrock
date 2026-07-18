@@ -458,7 +458,7 @@ fn fill_terrain_chunk(
 ///
 /// Note: for large inputs prefer [`run_terrain_only_to_disk`] which streams
 /// tiles to LevelDB rather than accumulating all chunks in memory.
-#[allow(dead_code)]
+#[allow(dead_code)] // re-exported public API (pipeline::run_terrain_only); legacy in-memory terrain path
 pub fn run_terrain_only(
     params: &TerrainParams,
     progress_cb: &dyn Fn(f32, &str),

@@ -20,7 +20,7 @@ pub const MIN_Y: i32 = -64;
 /// Maximum Y coordinate (top of the world, inclusive).
 pub const MAX_Y: i32 = 319;
 /// Total world height in blocks.
-#[allow(dead_code)]
+#[allow(dead_code)] // referenced by module doc + exercised by unit tests (world_height constant)
 pub const WORLD_HEIGHT: i32 = MAX_Y - MIN_Y + 1; // 384
 
 // ── Edition enum ──────────────────────────────────────────────────────────
@@ -512,7 +512,6 @@ pub fn enforce_java_memory_budget(edition: Edition, chunk_count: u64) -> Result<
 
 impl Edition {
     /// Create an unbounded world for this edition.
-    #[allow(dead_code)]
     pub fn create_world(&self, output: &Path) -> Box<dyn WorldWriter> {
         match self {
             Edition::Bedrock => Box::new(crate::bedrock::BedrockWorld::new(output)),
@@ -521,7 +520,7 @@ impl Edition {
     }
 
     /// Create a bounded world for incremental tile-based processing.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // public API: edition dispatch wrapper, kept for library consumers / bounded-world tests
     pub fn create_world_bounded(
         &self,
         output: &Path,

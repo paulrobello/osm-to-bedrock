@@ -43,13 +43,13 @@ impl CoordConverter {
     }
 
     /// Return the (chunk_x, chunk_z) that contains a block coordinate.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // exercised by unit tests (block_to_chunk_positive/negative)
     pub fn block_to_chunk(x: i32, z: i32) -> (i32, i32) {
         (x.div_euclid(16), z.div_euclid(16))
     }
 
     /// Return local (0..16) coordinates within a chunk.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // chunk-math helper, symmetric with block_to_chunk; public API for library consumers
     pub fn local_in_chunk(x: i32, z: i32) -> (i32, i32) {
         (x.rem_euclid(16), z.rem_euclid(16))
     }

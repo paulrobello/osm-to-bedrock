@@ -219,7 +219,7 @@ pub(crate) async fn parse_pbf_handler(
                 None => merged_data = Some(data),
             }
         }
-        Ok(merged_data.unwrap())
+        merged_data.ok_or_else(|| anyhow::anyhow!("no OSM files were uploaded"))
     })
     .await??;
 

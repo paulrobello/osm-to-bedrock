@@ -477,56 +477,92 @@ pub(crate) fn validate_bbox(bbox: [f64; 4], scale: f64) -> Result<(), &'static s
     Ok(())
 }
 
+/// Numeric bounds shared between `ConvertOptions` and `FetchConvertOptions`.
+///
+/// Both `/convert` and `/fetch-convert` (and `/overture-convert`, which
+/// reuses `FetchConvertOptions`) accept the same six numeric conversion
+/// parameters with the same valid ranges. This view lets the validation
+/// logic live in one place so the two endpoints cannot drift.
+struct ConvertNumericBounds {
+    scale: f64,
+    sea_level: i32,
+    building_height: i32,
+    vertical_scale: f64,
+    elevation_smoothing: i32,
+    surface_thickness: i32,
+}
+
+impl ConvertOptions {
+    fn numeric_bounds(&self) -> ConvertNumericBounds {
+        ConvertNumericBounds {
+            scale: self.scale,
+            sea_level: self.sea_level,
+            building_height: self.building_height,
+            vertical_scale: self.vertical_scale,
+            elevation_smoothing: self.elevation_smoothing,
+            surface_thickness: self.surface_thickness,
+        }
+    }
+}
+
+impl FetchConvertOptions {
+    fn numeric_bounds(&self) -> ConvertNumericBounds {
+        ConvertNumericBounds {
+            scale: self.scale,
+            sea_level: self.sea_level,
+            building_height: self.building_height,
+            vertical_scale: self.vertical_scale,
+            elevation_smoothing: self.elevation_smoothing,
+            surface_thickness: self.surface_thickness,
+        }
+    }
+}
+
+impl ConvertNumericBounds {
+    /// Validate the six shared numeric fields. Returns an error string
+    /// suitable for an HTTP 400 body when any value is out of range.
+    ///
+    /// Prevents crafted inputs like `scale = 1e300` from causing near-infinite
+    /// rasterization loops or memory exhaustion.
+    fn validate(&self) -> Result<(), &'static str> {
+        if !(0.01..=100.0).contains(&self.scale) {
+            return Err("scale must be in range 0.01 .. 100.0");
+        }
+        if !(0..=320).contains(&self.sea_level) {
+            return Err("sea_level must be in range 0 .. 320");
+        }
+        if !(1..=64).contains(&self.building_height) {
+            return Err("building_height must be in range 1 .. 64");
+        }
+        if !(0.01..=100.0).contains(&self.vertical_scale) {
+            return Err("vertical_scale must be in range 0.01 .. 100.0");
+        }
+        if !(0..=5).contains(&self.elevation_smoothing) {
+            return Err("elevation_smoothing must be in range 0 .. 5");
+        }
+        if !(1..=128).contains(&self.surface_thickness) {
+            return Err("surface_thickness must be in range 1 .. 128");
+        }
+        Ok(())
+    }
+}
+
 /// Validate numeric bounds on `ConvertOptions`.
 ///
-/// Returns an error string if any value is outside the accepted range.
-/// Prevents crafted inputs like `scale = 1e300` from causing near-infinite
-/// rasterization loops or memory exhaustion.
+/// Delegates to the shared [`ConvertNumericBounds::validate`] so `/convert`
+/// and `/fetch-convert` cannot drift on accepted ranges.
 pub(crate) fn validate_convert_options(opts: &ConvertOptions) -> Result<(), &'static str> {
-    if !(0.01..=100.0).contains(&opts.scale) {
-        return Err("scale must be in range 0.01 .. 100.0");
-    }
-    if !(0..=320).contains(&opts.sea_level) {
-        return Err("sea_level must be in range 0 .. 320");
-    }
-    if !(1..=64).contains(&opts.building_height) {
-        return Err("building_height must be in range 1 .. 64");
-    }
-    if !(0.01..=100.0).contains(&opts.vertical_scale) {
-        return Err("vertical_scale must be in range 0.01 .. 100.0");
-    }
-    if !(0..=5).contains(&opts.elevation_smoothing) {
-        return Err("elevation_smoothing must be in range 0 .. 5");
-    }
-    if !(1..=128).contains(&opts.surface_thickness) {
-        return Err("surface_thickness must be in range 1 .. 128");
-    }
-    Ok(())
+    opts.numeric_bounds().validate()
 }
 
 /// Validate numeric bounds on `FetchConvertOptions`.
+///
+/// Delegates to the shared [`ConvertNumericBounds::validate`] so `/convert`
+/// and `/fetch-convert` cannot drift on accepted ranges.
 pub(crate) fn validate_fetch_convert_options(
     opts: &FetchConvertOptions,
 ) -> Result<(), &'static str> {
-    if !(0.01..=100.0).contains(&opts.scale) {
-        return Err("scale must be in range 0.01 .. 100.0");
-    }
-    if !(0..=320).contains(&opts.sea_level) {
-        return Err("sea_level must be in range 0 .. 320");
-    }
-    if !(1..=64).contains(&opts.building_height) {
-        return Err("building_height must be in range 1 .. 64");
-    }
-    if !(0.01..=100.0).contains(&opts.vertical_scale) {
-        return Err("vertical_scale must be in range 0.01 .. 100.0");
-    }
-    if !(0..=5).contains(&opts.elevation_smoothing) {
-        return Err("elevation_smoothing must be in range 0 .. 5");
-    }
-    if !(1..=128).contains(&opts.surface_thickness) {
-        return Err("surface_thickness must be in range 1 .. 128");
-    }
-    Ok(())
+    opts.numeric_bounds().validate()
 }
 
 /// Validate numeric bounds on `TerrainConvertOptions`.

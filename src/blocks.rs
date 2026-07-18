@@ -272,7 +272,6 @@ impl Block {
 
 /// Typed block state value for Bedrock Edition NBT palette entries.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[allow(dead_code)]
 pub enum BlockState {
     Int(&'static str, i32),
     Byte(&'static str, i8),
@@ -289,7 +288,6 @@ pub struct RoadStyle {
     pub sidewalk: bool,
     #[allow(dead_code)] // reserved for future road center-line rendering
     pub center_line: bool,
-    #[allow(dead_code)]
     pub edge_lines: bool,
 }
 
@@ -357,12 +355,6 @@ pub fn landuse_to_block(landuse: &str) -> Block {
         "reservoir" | "water" | "basin" => Block::Water,
         _ => Block::GrassBlock,
     }
-}
-
-/// Block used for building walls.
-#[allow(dead_code)]
-pub fn building_wall_block() -> Block {
-    Block::StoneBrick
 }
 
 /// Block for `natural=*` features.
