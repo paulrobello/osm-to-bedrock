@@ -141,8 +141,9 @@ streaming tests.)
 - **What remains**: `cargo login` + `cargo publish` (and the release workflow already has an "already-published" skip). Then remove the demotion note. Publishing is an outward-facing action requiring explicit confirmation — not done autonomously.
 - **Estimated effort**: small (after the publish decision).
 
-### [ARC-011] Donate `source_options.rs` upstream (outward-facing — deferred)
-- Moving shared logic into the `par-osm-rust` crate is an outward-facing cross-repo change; left for the maintainer.
+### [ARC-011] Donate `source_options.rs` upstream (code-complete locally — publish deferred)
+- `source_options.rs` (7 parsers + 3 tests) is donated into `par-osm-rust`, wired into its `lib.rs`, and the crate bumped 0.1.1 → 0.1.2 — committed locally as `par-osm-rust@17b8847` (its `make checkall` green: 119 tests, fmt/clippy/typecheck clean). The downstream re-export shim (`pub use par_osm_rust::source_options::*;`) was verified end-to-end against the local path (osm-to-bedrock: 237 lib tests + 9 integration + 2 doctests pass), then reverted so osm-to-bedrock stays on the published `=0.1.1`.
+- **Deferred per maintainer decision (2026-07-18):** publishing `par-osm-rust` 0.1.2 to crates.io (via its `publish-crates.yml` workflow) and the osm-to-bedrock pin bump `=0.1.1` → `=0.1.2` + shim swap. When ready: push `par-osm-rust@17b8847`, trigger the publish workflow, wait for 0.1.2 on the registry, then bump the pin + swap the shim + `make checkall` + commit.
 
 ### [DOC-009] `install-hooks` target (✅ resolved — decision: keep, restricted to `pre-commit`)
 - The stale graphify hooks are deleted and `install-hooks` only arms `pre-commit`. Decision taken: **keep the target** rather than drop it — `install-hooks` is one of the project's standard Makefile targets, and the restricted form is correct (the original defect, silently re-enabling graphify on `make install-hooks`, is gone). No further code change required beyond the deletion + CHANGELOG `Removed` entry already shipped.
@@ -191,5 +192,5 @@ Full per-commit detail: `git log --stat ba458dc..HEAD`.
 
 1. **Review the deferred items** above (ARC-001 full streaming writer is the only Critical-adjacent follow-up; the OOM guard already makes it safe).
 2. **Re-run `/audit`** to get a fresh AUDIT.md reflecting current state (the structural debt that drove most findings is gone; the codebase is materially smaller per-file and test-covered).
-3. **Decide on the maintainer actions**: crates.io publish (DOC-003); upstream donation (ARC-011) — `source_options.rs` is donated into `par-osm-rust` locally (commit pending publish); a 0.1.2 crates.io release + downstream pin bump remains, gated on explicit confirmation. DOC-009 is resolved (keep `install-hooks`).
+3. **Decide on the maintainer actions**: crates.io publish (DOC-003); ARC-011 — `source_options.rs` is donated + verified in `par-osm-rust@17b8847` (local only); publishing 0.1.2 to crates.io + the osm-to-bedrock pin bump/shim swap was deferred (2026-07-18) and can be resumed anytime. DOC-009 is resolved (keep `install-hooks`).
 4. **Consider** a follow-up to clear the 40 `cargo doc` intra-doc-link warnings and (optionally) the ARC-010 DashMap migration.
