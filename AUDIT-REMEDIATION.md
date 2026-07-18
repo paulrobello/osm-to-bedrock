@@ -26,11 +26,13 @@ and committed to `main`:
   longer contends with worker progress writes. `lock_jobs` is removed (DashMap
   shard locks don't poison — SEC-006 is now structural).
 
-**Updated count**: **54 of 58** unique issues resolved. Remaining open items
-are the three maintainer/outward-facing ones (DOC-003 crates.io publish,
-ARC-011 upstream donation, DOC-009 `install-hooks` target) plus the optional
-low-priority skips. **Verification**: `make checkall` exit 0 — **251 Rust
-tests** (240 lib + 9 integration + 2 doctests) + **21 web tests**, clippy/fmt/
+**Updated count**: **55 of 58** unique issues resolved. Remaining open items
+are the two maintainer/outward-facing ones (DOC-003 crates.io publish,
+ARC-011 upstream donation) plus the optional low-priority skips. DOC-009 is
+now closed (decision: keep `install-hooks` restricted to `pre-commit` — it is
+one of the project's standard Makefile targets, and the restricted form is
+correct). **Verification**: `make checkall` exit 0 — **251 Rust tests**
+(240 lib + 9 integration + 2 doctests) + **21 web tests**, clippy/fmt/
 tsc/build clean. (Rust count dropped 254→251: −6 retired guard tests, +3
 streaming tests.)
 
@@ -142,8 +144,8 @@ streaming tests.)
 ### [ARC-011] Donate `source_options.rs` upstream (outward-facing — deferred)
 - Moving shared logic into the `par-osm-rust` crate is an outward-facing cross-repo change; left for the maintainer.
 
-### [DOC-009] `install-hooks` target (safe default taken)
-- Deleted the stale graphify hooks; `install-hooks` now only arms `pre-commit`. A maintainer may prefer to drop the target entirely.
+### [DOC-009] `install-hooks` target (✅ resolved — decision: keep, restricted to `pre-commit`)
+- The stale graphify hooks are deleted and `install-hooks` only arms `pre-commit`. Decision taken: **keep the target** rather than drop it — `install-hooks` is one of the project's standard Makefile targets, and the restricted form is correct (the original defect, silently re-enabling graphify on `make install-hooks`, is gone). No further code change required beyond the deletion + CHANGELOG `Removed` entry already shipped.
 
 ### Skipped (low-priority, no action needed)
 - **QA-011** — stub consolidation (optional; stubs already documented).
@@ -189,5 +191,5 @@ Full per-commit detail: `git log --stat ba458dc..HEAD`.
 
 1. **Review the deferred items** above (ARC-001 full streaming writer is the only Critical-adjacent follow-up; the OOM guard already makes it safe).
 2. **Re-run `/audit`** to get a fresh AUDIT.md reflecting current state (the structural debt that drove most findings is gone; the codebase is materially smaller per-file and test-covered).
-3. **Decide on the maintainer actions**: crates.io publish (DOC-003), `install-hooks` target (DOC-009), upstream donation (ARC-011).
+3. **Decide on the maintainer actions**: crates.io publish (DOC-003); upstream donation (ARC-011) — `source_options.rs` is donated into `par-osm-rust` locally (commit pending publish); a 0.1.2 crates.io release + downstream pin bump remains, gated on explicit confirmation. DOC-009 is resolved (keep `install-hooks`).
 4. **Consider** a follow-up to clear the 40 `cargo doc` intra-doc-link warnings and (optionally) the ARC-010 DashMap migration.
