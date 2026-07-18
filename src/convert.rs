@@ -33,7 +33,7 @@ impl CoordConverter {
 
     /// Convert (block_x, block_z) back to (lat, lon).
     ///
-    /// Inverse of [`to_block_xz`].  Used by elevation sampling to map each
+    /// Inverse of `to_block_xz`.  Used by elevation sampling to map each
     /// block column back to a geographic coordinate.
     pub fn to_lat_lon(&self, bx: i32, bz: i32) -> (f64, f64) {
         let metres_per_deg_lon = METRES_PER_DEG_LAT * self.origin_lat.to_radians().cos();

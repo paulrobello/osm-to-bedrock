@@ -361,7 +361,7 @@ impl Default for ChunkStore {
 /// and `crate::anvil::JavaWorld` (Java Edition, behind feature gate).
 ///
 /// The trait is the seam that lets the streaming tile pipeline
-/// ([`crate::pipeline::run_pipeline_streaming`]) treat both editions
+/// (`crate::pipeline::run_pipeline_streaming`) treat both editions
 /// uniformly: each tile's blocks flow through `set_block`/`insert_chunk`,
 /// then [`WorldWriter::flush_tile`] drains them to the edition-specific
 /// sink (LevelDB writer for Bedrock, accumulated `HashMap` for Java).

@@ -35,11 +35,11 @@
 //!
 //! ## Module layout (ARC-004)
 //!
-//! - [`mod@state`]   — `Jobs` / `AppState` / `JobState` + lock + eviction.
-//! - [`mod@error`]   — `ApiError` wrapper rendering generic 500 / explicit 400.
-//! - [`mod@auth`]    — optional shared-secret API key middleware (SEC-001).
-//! - [`mod@options`] — request/response structs, serde defaults, validation.
-//! - [`mod@handlers`] — HTTP handlers + QA-004 job-control helpers.
+//! - `state`   — `Jobs` / `AppState` / `JobState` + lock + eviction.
+//! - `error`   — `ApiError` wrapper rendering generic 500 / explicit 400.
+//! - `auth`    — optional shared-secret API key middleware (SEC-001).
+//! - `options` — request/response structs, serde defaults, validation.
+//! - `handlers` — HTTP handlers + QA-004 job-control helpers.
 
 use anyhow::Result;
 use axum::{

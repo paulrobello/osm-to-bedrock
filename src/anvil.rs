@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 ///   [`WorldWriter::set_tile_bounds`] + [`WorldWriter::flush_tile`]. Holds only
 ///   the current tile's chunks in the scratch [`ChunkStore`] and lazily writes
 ///   each 32×32 region file once the tile containing its maximum in-bounds
-///   chunk has flushed (see [`StreamingAnvil`]). Peak memory ≈ one tile + a
+///   chunk has flushed (see `StreamingAnvil`). Peak memory ≈ one tile + a
 ///   handful of frontier region buffers, matching Bedrock's per-tile profile.
 pub struct JavaWorld {
     /// Shared chunk grid + auxiliary override maps + optional tile bounds.

@@ -225,7 +225,7 @@ pub struct FetchConvertArgs {
     #[arg(long, default_value = "OSM World")]
     pub world_name: String,
 
-    /// Overpass API URL (default: https://overpass-api.de/api/interpreter).
+    /// Overpass API URL (default: <https://overpass-api.de/api/interpreter>).
     /// Useful for pointing at a mirror when the default is overloaded.
     /// Can also be set via the OVERPASS_URL environment variable.
     #[arg(long)]

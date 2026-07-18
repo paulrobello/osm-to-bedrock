@@ -18,6 +18,7 @@ _Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 54 of 
 - Mutex-poisoning recovery — a panicked background job no longer crashes the API server on the next request.
 
 ### Added
+- `make docs` Makefile target (rustdoc built with warnings-as-errors), wired into `make checkall` so broken intra-doc-links fail the gate; clears all 29 pre-existing `cargo doc` warnings left by the module splits (private intra-doc-links, stale-path links, a bare URL).
 - `docs/DEPLOYMENT.md` — Docker, reverse-proxy, and self-hosting guide (ports, environment variables, and the auth requirement that applies to non-loopback binds).
 - Test net for the previously-untested orchestrator: `ChunkData` round-trip tests, a `RecordingWorld` `render_osm_features` integration test, cross-edition Bedrock↔Java parity tests, and `params`/`nbt` coverage (Rust tests 163 → 254).
 - `vitest` web test suite (api-config + `useConversion` polling state machine) with a CI step and a `web-test` Make target (web tests 0 → 21).

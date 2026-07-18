@@ -227,7 +227,7 @@ pub(super) fn load_elevation(
 /// Process one tile's terrain fill + OSM-feature overlay into `world`.
 ///
 /// Shared by the (now edition-agnostic) outer tile loop in
-/// [`super::run_pipeline_streaming`]. The caller is responsible for:
+/// `super::run_pipeline_streaming`. The caller is responsible for:
 /// 1. calling `world.set_tile_bounds(...)` with this tile's chunk rect
 ///    (so backends that enforce bounds write only in-tile blocks);
 /// 2. calling `world.flush_tile()` after this returns (so streaming

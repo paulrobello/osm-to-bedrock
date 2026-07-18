@@ -89,7 +89,7 @@ pub struct TimingInfo {
     pub duration_secs: f64,
 }
 
-/// Tracks conversion timing. Create one at the start, call [`finish`] at the end.
+/// Tracks conversion timing. Create one at the start, call `finish` at the end.
 pub struct MetadataTimer {
     start: Instant,
     started_at: String,

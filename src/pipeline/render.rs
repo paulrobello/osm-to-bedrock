@@ -65,11 +65,11 @@ pub struct TileWays<'a> {
 /// Each layer lives in its own `render_*` helper below and is guarded by
 /// the corresponding `params.filter.*` flag (except barriers, which always
 /// run). The orchestrator only sequences the layers; per-layer logic is
-/// contained in [`render_landuse`], [`render_water`], [`render_railways`],
-/// [`render_roads`], [`render_barriers`], [`render_buildings`],
-/// [`render_street_signs`], [`render_address_signs`],
-/// [`render_poi_markers`], [`render_tree_nodes`], and
-/// [`render_poi_decorations`].
+/// contained in `render_landuse`, `render_water`, `render_railways`,
+/// `render_roads`, `render_barriers`, `render_buildings`,
+/// `render_street_signs`, `render_address_signs`,
+/// `render_poi_markers`, `render_tree_nodes`, and
+/// `render_poi_decorations`.
 #[allow(clippy::too_many_arguments)]
 pub fn render_osm_features(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &TileWays) {
     if ctx.params.filter.landuse {

@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt typecheck checkall web-check web-test clean install web-dev web-build web-install web-kill kill stop serve-stop web-stop docker-build docker-run docker-stop pre-commit install-hooks
+.PHONY: build test lint fmt typecheck checkall web-check web-test docs clean install web-dev web-build web-install web-kill kill stop serve-stop web-stop docker-build docker-run docker-stop pre-commit install-hooks
 
 build:
 	cargo build --release
@@ -21,7 +21,10 @@ web-test: ## Run web unit tests (vitest)
 web-check: ## Lint, unit-test, and build-check the Next.js frontend
 	cd web && bun run lint && bun run test && bun run build
 
-checkall: fmt lint typecheck test web-check
+docs: ## Build rustdoc with warnings-as-errors (catches broken intra-doc links)
+	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+
+checkall: fmt lint typecheck test web-check docs
 
 clean:
 	cargo clean

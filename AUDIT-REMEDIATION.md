@@ -155,7 +155,7 @@ donation shim.)
 - **DOC-020** — release-marketing artifacts at root (moving would break README's gallery link).
 
 ### Noted (not in audit scope)
-- `cargo doc --no-deps` emits **40 pre-existing intra-doc-link warnings** to private items (created by the directory splits). They don't affect `make checkall` (which doesn't run `cargo doc`) or clippy. A future pass can either make the linked items `pub(crate)` or convert the `[`Foo`]` links to scoped paths.
+- **`cargo doc` warnings — ✅ resolved (2026-07-18).** All 29 `cargo doc --no-deps` warnings (private-intra-doc-links left by the module splits + 3 stale-path unresolved links + 1 bare URL) are fixed by converting the resolution-links to plain code spans and wrapping the bare URL (internal items stay private — no public-API expansion). A new `make docs` target (`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`) is wired into `make checkall`, so future doc-link regressions fail the gate.
 
 ---
 

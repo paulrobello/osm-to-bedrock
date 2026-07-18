@@ -32,8 +32,8 @@
 //!
 //! ## Shared rendering
 //!
-//! Both the in-memory ([`preview::run_pipeline`]) and streaming
-//! ([`run_pipeline_streaming`]) paths call
+//! Both the in-memory (`preview::run_pipeline`) and streaming
+//! (`run_pipeline_streaming`) paths call
 //! [`render::render_osm_features`] to avoid code duplication.  The
 //! streaming path is edition-agnostic at the outer tile loop: each tile is
 //! processed through a [`WorldWriter`] that exposes
@@ -48,13 +48,13 @@
 //! | Submodule | Contents |
 //! |-----------|----------|
 //! | [`util`] | `zip_directory`, `format_bytes`, `is_closed_way`, `coord_hash` |
-//! | [`render`] | `RenderContext`, `TileWays`, `render_osm_features` |
-//! | [`decoration`] | POI / tree decoration helpers (`pub(super)`) |
-//! | [`terrain`] | terrain fill, geometry helpers, `process_tile`, terrain-only entry points |
-//! | [`preview`] | in-memory preview entry points |
+//! | `render` | `RenderContext`, `TileWays`, `render_osm_features` |
+//! | `decoration` | POI / tree decoration helpers (`pub(super)`) |
+//! | `terrain` | terrain fill, geometry helpers, `process_tile`, terrain-only entry points |
+//! | `preview` | in-memory preview entry points |
 //!
 //! This file holds the top-level streaming dispatch
-//! ([`run_pipeline_streaming`], [`run_conversion`],
+//! (`run_pipeline_streaming`, [`run_conversion`],
 //! [`run_conversion_from_data`]) and re-exports the public API from the
 //! submodules so callers see no difference from the pre-split flat module.
 
