@@ -9,6 +9,33 @@
 
 ---
 
+## Follow-up: ARC-001 + ARC-010 (2026-07-17)
+
+The two items originally deferred above were completed in a follow-up session
+and committed to `main`:
+
+- **ARC-001 — streaming Java Edition writer** (`a240fb6`). `JavaWorld::new_streaming`
+  scopes its scratch store to the current tile and lazily writes 32×32 Anvil
+  region files as tiles flush, giving Java Bedrock's per-tile memory profile.
+  The `enforce_java_memory_budget` OOM guard (and its constants + 6 tests) is
+  retired — both editions now stream, and Bedrock never had a guard. A
+  byte-parity test asserts the streaming writer produces region files identical
+  to the in-memory path, including a region that straddles a tile boundary.
+- **ARC-010 — DashMap job state** (`d5191e6`). `Jobs` is now
+  `Arc<DashMap<String, JobState>>`; the `/status` + `/download` read path no
+  longer contends with worker progress writes. `lock_jobs` is removed (DashMap
+  shard locks don't poison — SEC-006 is now structural).
+
+**Updated count**: **54 of 58** unique issues resolved. Remaining open items
+are the three maintainer/outward-facing ones (DOC-003 crates.io publish,
+ARC-011 upstream donation, DOC-009 `install-hooks` target) plus the optional
+low-priority skips. **Verification**: `make checkall` exit 0 — **251 Rust
+tests** (240 lib + 9 integration + 2 doctests) + **21 web tests**, clippy/fmt/
+tsc/build clean. (Rust count dropped 254→251: −6 retired guard tests, +3
+streaming tests.)
+
+---
+
 ## Execution Summary
 
 | Phase | Status | Agent(s) | Issues Targeted | Resolved | Partial | Manual/Deferred |
@@ -100,15 +127,12 @@
 
 ## Requires Manual Intervention / Deferred 🔧
 
-### [ARC-001] Full streaming Anvil writer (Critical — partially addressed)
-- **What shipped**: the deterministic OOM guard (refuse oversized `edition=java` before allocating). This **closes the Critical failure mode** (server can no longer be OOM-killed via `/fetch-convert`).
-- **What remains**: the full lazy region-file streaming writer, so Java can handle large maps without the memory cap. The seam is ready — the tile loop calls `flush_tile()` uniformly; a future `JavaWorld::flush_tile` override that writes completed 32×32 region files lazily can drop `enforce_java_memory_budget` entirely.
-- **Estimated effort**: large (multi-day feature). See `src/anvil.rs` + the docstring at `src/pipeline/mod.rs`.
+### [ARC-001] Full streaming Anvil writer (Critical — ✅ resolved in follow-up `a240fb6`)
+- **What shipped originally**: the deterministic OOM guard (refuse oversized `edition=java` before allocating), which closed the Critical failure mode (server could no longer be OOM-killed via `/fetch-convert`).
+- **What landed in follow-up**: the full lazy region-file streaming writer. `JavaWorld::new_streaming` drains each tile's chunks into 32×32 region buffers and writes each `.mca` once the tile containing the region's max in-bounds chunk has flushed; peak memory ≈ one tile + a frontier of region buffers. `enforce_java_memory_budget` (and its constants + 6 tests) is retired — both editions now stream. A byte-parity test pins the streaming output to the in-memory path, including a region straddling a tile boundary.
 
-### [ARC-010] DashMap for read-heavy job-status path (deferred — backlog)
-- **Why deferred**: classified "Long-term (Backlog)" in the audit's own roadmap; `MAX_CONCURRENT_JOBS = 4` means low contention, and `lock_jobs` recovery (SEC-006) already eliminates the crash risk. Lowest value-to-risk of the remaining items.
-- **Recommended approach**: `Arc<DashMap<Uuid, JobState>>` for the status-read path; keep `set_job_error` semantics. Touches `src/server/state.rs` + `handlers.rs`.
-- **Estimated effort**: medium.
+### [ARC-010] DashMap for read-heavy job-status path (✅ resolved in follow-up `d5191e6`)
+- **What landed**: `Jobs` is `Arc<DashMap<String, JobState>>`; the `/status` + `/download` read path no longer contends with worker progress writes. `lock_jobs` is removed (DashMap shard locks don't poison — SEC-006 is now structural). A test pins that the map stays usable after a panicked worker thread.
 
 ### [DOC-003] Publish `osm_to_bedrock` to crates.io (outward-facing — needs maintainer)
 - **What shipped**: README demoted the broken install to "not yet published" + working alternatives. DOC-011 docstring coverage (the precondition) is now done.

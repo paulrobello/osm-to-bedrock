@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 52 of 58 audit issues resolved._
+_Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 54 of 58 audit issues resolved (ARC-001 streaming Java writer + ARC-010 DashMap landed after the initial run)._
 
 ### Security
 - Opt-in shared-secret auth on the HTTP API via `--api-key` / `OSM_TO_BEDROCK_API_KEY` (constant-time compare), checked on all routes except `/health`. The server now refuses to bind a non-loopback address (e.g. `--host 0.0.0.0`) without a key unless `OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1` is set.
@@ -25,7 +25,8 @@ _Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 52 of 
 - `AbortController` cleanup in `useConversion` so polling stops on unmount.
 
 ### Changed
-- **Java Edition OOM guard** — `edition=java` conversions that would exceed a 1.5 GB / ~15k-chunk memory budget are now refused before allocation, instead of accumulating the whole world in RAM (Bedrock already streams tile-by-tile). The full streaming Java writer remains future work.
+- **Streaming Java Edition writer (ARC-001)** — `edition=java` conversions now stream tile-by-tile like Bedrock instead of accumulating the whole world in RAM. `JavaWorld::new_streaming` scopes its scratch store to the current tile and lazily writes 32×32 Anvil region files as tiles flush, so peak memory ≈ one tile + a small frontier of region buffers. The previous `enforce_java_memory_budget` OOM guard is retired (both editions now match Bedrock's per-tile profile, which never needed a guard).
+- **DashMap job state (ARC-010)** — the API server's job map is now `Arc<DashMap<String, JobState>>` instead of `Arc<Mutex<HashMap<…>>>`, so the read-heavy `/status` + `/download` polling path no longer contends with worker progress writes. The `lock_jobs` mutex-poisoning helper is removed (DashMap shard locks never poison — SEC-006 recovery is now structural).
 - Deduped the Bedrock/Java tile loop via a `process_tile` helper + `WorldWriter::flush_tile()`; the outer loop is now edition-agnostic.
 - Split `src/pipeline.rs` (2591 LOC) → `src/pipeline/{mod,render,terrain,preview,decoration,util}.rs`.
 - Split `src/server.rs` (3127 LOC) → `src/server/{mod,state,error,auth,options,handlers}.rs`; extracted a shared `spawn_conversion_job` helper.
