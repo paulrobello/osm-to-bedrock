@@ -46,6 +46,7 @@
 pub mod anvil;
 pub mod bedrock;
 pub mod blocks;
+pub mod cli;
 pub mod config;
 pub mod convert;
 pub mod elevation;
