@@ -30,7 +30,7 @@ make dev             # Both Rust API (3002) + web (8031)
 
 ## API Proxy Routes
 
-All backend calls proxy through `src/app/api/` to the Rust server at `NEXT_PUBLIC_API_URL` (default `http://localhost:3002`):
+All backend calls proxy through `src/app/api/` to the Rust server at `RUST_API_URL` (server-side env var, default `http://localhost:3002`):
 
 | Route | Proxies to |
 |-------|-----------|

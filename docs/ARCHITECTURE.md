@@ -293,13 +293,14 @@ The Java world format uses Anvil region files (`.mca`) and a gzip-compressed `le
 
 ## Server Architecture
 
-The HTTP server in `src/server.rs` uses Axum with Tower middleware. It runs as an async Tokio application and is started via the `serve` subcommand or `make serve`.
+The HTTP server lives in the `src/server/` module (split across `mod.rs`, `state.rs`, `auth.rs`, `options.rs`, `error.rs`, and `handlers.rs`), uses Axum with Tower middleware, and runs as an async Tokio application. It is started via the `serve` subcommand or `make serve`. The router is assembled in `build_router_with_state` in `src/server/mod.rs`.
 
 **Key architectural elements:**
 
 - **CORS** — configurable allowed origins via `cors_allowed_origin()`, permitting GET, POST, and OPTIONS methods
 - **Background jobs** — conversion jobs run in spawned Tokio tasks. Job state is tracked in `Arc<Mutex<HashMap<String, JobState>>>` (the `Jobs` type). A background eviction task periodically removes completed jobs past their TTL.
-- **Body limits** — per-route limits prevent abuse: 100 MB for parse, 500 MB for convert, 50 MB for preview
+- **Body limits** — per-route limits prevent abuse: 100 MB for parse, 500 MB for convert, 50 MB for preview, and 1 MiB for the JSON routes (`fetch-preview`, `fetch-block-preview`, `fetch-convert`, `terrain-convert`, `overture-convert`)
+- **Auth** — when `OSM_TO_BEDROCK_API_KEY` is set, every route except `/health` requires the matching key in the `Authorization` (or `X-API-Key`) header. `/health` stays public so liveness probes work without credentials.
 - **ChunkWriter I/O pipeline** — the server uses the same streaming tile architecture as the CLI, so large conversions do not spike memory
 
 ### API Endpoints
@@ -317,9 +318,9 @@ The HTTP server in `src/server.rs` uses Axum with Tower middleware. It runs as a
 | `POST` | `/overture-convert` | Overture Maps data conversion |
 | `GET` | `/cache/areas` | List cached Overpass bbox entries |
 | `GET` | `/status/{id}` | Poll conversion job progress |
-| `GET` | `/download/{id}` | Download completed `.mcworld` file |
+| `GET` | `/download/{id}` | Download completed `.mcworld` (Bedrock) or `.zip` (Java) file |
 
-The Next.js frontend (`web/`) proxies all backend calls through its own API routes (`web/src/app/api/`) to the Rust server. The Rust API base URL is configured via `NEXT_PUBLIC_API_URL`.
+All routes except `/health` require the API key when one is configured (see Auth above). The Next.js frontend (`web/`) proxies all backend calls through its own API routes (`web/src/app/api/`) to the Rust server. The Rust API base URL is configured via the server-side `RUST_API_URL` env var (default `http://localhost:3002`); it is not `NEXT_PUBLIC_`-prefixed, so it is never inlined into the browser bundle and can be overridden at runtime without a rebuild.
 
 ## Key Design Decisions
 

@@ -55,7 +55,7 @@ cp .env.local.example .env.local
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:3002` | URL of the Rust API server. Change this when running the API on a different host or port. |
+| `RUST_API_URL` | `http://localhost:3002` | URL of the Rust API server. Read server-side by the Next.js proxy routes (not inlined into the browser bundle). Change this when running the API on a different host or port. |
 
 ## Features
 
@@ -72,7 +72,7 @@ cp .env.local.example .env.local
 ## Proxy Route Table
 
 All backend calls go through Next.js API routes at `src/app/api/` and are forwarded to
-the Rust server at `NEXT_PUBLIC_API_URL`:
+the Rust server at `RUST_API_URL` (server-side env var):
 
 | Route | Method | Proxies to | Notes |
 |-------|--------|-----------|-------|

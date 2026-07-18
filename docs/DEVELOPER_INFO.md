@@ -1283,12 +1283,12 @@ All environment variables are optional; the tool operates with sensible defaults
 | `OVERPASS_URL` | CLI (`fetch-convert`), API server | `https://overpass-api.de/api/interpreter` | Overpass API endpoint. Override to use a mirror when the default is overloaded. |
 | `OVERPASS_CACHE_DIR` | CLI, API server | `~/.cache/osm-to-bedrock/overpass/` | Directory for the Overpass response disk cache. Useful for Docker volumes or CI caches. |
 | `SRTM_CACHE_DIR` | CLI, API server | `~/.cache/osm-to-bedrock/srtm/` | Directory for downloaded SRTM HGT tile files. Set to a persistent volume path to avoid re-downloading tiles. |
-| `NEXT_PUBLIC_API_URL` | Web Explorer | `http://localhost:3002` | URL of the Rust API server. Set in `web/.env.local` when running the API on a non-default host or port. |
+| `RUST_API_URL` | Web Explorer | `http://localhost:3002` | URL of the Rust API server, read server-side by the Next.js proxy routes (not inlined into the browser bundle). Set in `web/.env.local` when running the API on a non-default host or port. |
 
 **Example `.env.local` for the Web Explorer:**
 
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:3002
+RUST_API_URL=http://localhost:3002
 ```
 
 **Example environment for a Docker/CI deployment:**
@@ -1345,7 +1345,7 @@ through Next.js API routes to the Rust server.
 ### Proxy Route Table
 
 Every backend call goes through a Next.js API route that forwards to the Rust server
-at `NEXT_PUBLIC_API_URL` (default `http://localhost:3002`):
+at `RUST_API_URL` (server-side env var, default `http://localhost:3002`):
 
 | Next.js route | Proxies to (Rust) | Notes |
 |--------------|-------------------|-------|

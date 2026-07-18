@@ -20,7 +20,10 @@ RUN bun install --frozen-lockfile
 
 COPY web/ .
 
-ENV NEXT_PUBLIC_API_URL=http://localhost:3002
+# RUST_API_URL is read at runtime by the Next.js server (server-side only —
+# never inlined into the client bundle), so it is NOT set here. Setting it in
+# the build stage would have no effect on the output. Override it at runtime
+# via `docker run -e RUST_API_URL=...` (see the runtime stage below).
 RUN bun run build
 
 # ── Stage 3: Runtime ──────────────────────────────────────────────────
@@ -45,7 +48,10 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV RUST_LOG=info
-ENV NEXT_PUBLIC_API_URL=http://localhost:3002
+# Server-side base URL for the Next.js proxy routes → Rust API. Override at
+# runtime for remote deploys (`docker run -e RUST_API_URL=https://api.example`).
+# Defaulting to localhost keeps `make dev` / local docker-run working.
+ENV RUST_API_URL=http://localhost:3002
 
 # SECURITY: the entrypoint binds the API to 0.0.0.0. The Rust binary refuses
 # to start without OSM_TO_BEDROCK_API_KEY being set by the operator (or

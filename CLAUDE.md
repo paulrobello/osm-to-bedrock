@@ -50,7 +50,7 @@ Features: Location search, Overpass API queries, PBF file upload, layer toggles 
 
 ### Web ↔ Rust API Architecture
 
-The Next.js frontend proxies all backend calls through its own API routes (`web/src/app/api/`) to the Rust server. The Rust API base URL is configured via `NEXT_PUBLIC_API_URL` (default `http://localhost:3002`).
+The Next.js frontend proxies all backend calls through its own API routes (`web/src/app/api/`) to the Rust server. The Rust API base URL is configured via the server-side `RUST_API_URL` env var (default `http://localhost:3002`); it is not `NEXT_PUBLIC_`-prefixed, so it is never inlined into the browser bundle and can be overridden at runtime without a rebuild.
 
 **Rust API endpoints** (`server.rs`):
 - `GET  /health` — liveness check

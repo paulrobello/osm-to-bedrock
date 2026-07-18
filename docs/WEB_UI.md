@@ -197,7 +197,7 @@ graph LR
 
 ### Next.js Proxy Routes
 
-All backend communication is proxied through Next.js API routes to the Rust server at `NEXT_PUBLIC_API_URL` (default `http://localhost:3002`). Timeout budgets are centralized in `lib/api-config.ts`.
+All backend communication is proxied through Next.js API routes to the Rust server at `RUST_API_URL` (server-side env var, default `http://localhost:3002`; not inlined into the browser bundle). Timeout budgets and the shared `proxyToRust` helper are centralized in `lib/api-config.ts`.
 
 | Next.js Route | Method | Proxies To | Description |
 |---------------|--------|------------|-------------|
@@ -288,7 +288,7 @@ The map is built on OpenLayers and provides the following capabilities:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:3002` | Base URL of the Rust API server |
+| `RUST_API_URL` | `http://localhost:3002` | Base URL of the Rust API server (read server-side by the Next.js proxy routes; not inlined into the browser bundle) |
 
 Copy `web/.env.local.example` to `web/.env.local` and adjust if the Rust API runs on a different host or port.
 

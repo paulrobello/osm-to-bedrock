@@ -1,5 +1,4 @@
-import { RUST_API_URL, TIMEOUTS } from '@/lib/api-config';
-const FETCH_TIMEOUT_MS = TIMEOUTS.CONVERT;
+import { proxyToRust, TIMEOUTS } from '@/lib/api-config';
 
 export async function POST(request: Request): Promise<Response> {
   let formData: FormData;
@@ -25,35 +24,10 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  const controller = new AbortController();
-  const timerId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(`${RUST_API_URL}/preview`, {
-      method: 'POST',
-      body: forwardForm,
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      return Response.json(
-        { error: `Rust API error (${res.status}): ${text}` },
-        { status: 502 },
-      );
-    }
-
-    const data: unknown = await res.json();
-    return Response.json(data);
-  } catch (err: unknown) {
-    const message =
-      err instanceof Error
-        ? err.name === 'AbortError'
-          ? 'Preview request timed out'
-          : err.message
-        : 'Unknown error';
-    return Response.json({ error: message }, { status: 502 });
-  } finally {
-    clearTimeout(timerId);
-  }
+  return proxyToRust('/preview', {
+    method: 'POST',
+    body: forwardForm,
+    timeoutMs: TIMEOUTS.CONVERT,
+    timeoutLabel: 'Preview',
+  });
 }

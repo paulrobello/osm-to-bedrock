@@ -273,11 +273,12 @@ open http://localhost:8031
 
 **Configuration:**
 
-Set `NEXT_PUBLIC_API_URL` in `web/.env.local` to point the frontend at a non-default
-Rust API server:
+Set `RUST_API_URL` in `web/.env.local` to point the frontend at a non-default
+Rust API server (read server-side by the Next.js proxy routes — not inlined
+into the browser bundle, so it can be changed without a rebuild):
 
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:3002
+RUST_API_URL=http://localhost:3002
 ```
 
 See `web/.env.local.example` for a complete template.
