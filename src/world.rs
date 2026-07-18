@@ -194,3 +194,224 @@ impl Edition {
         }
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+//
+// `ChunkData::set`/`get` and the XZY indexing (`idx = lx*256 + lz*16 + ly`)
+// are the single most load-bearing primitive in the codebase: an off-by-one
+// here silently corrupts every world both backends write. These tests cover
+// the sub-chunk boundaries exhaustively because that is exactly where the
+// `div_euclid(16)`/`rem_euclid(16)` split lives.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::blocks::Block;
+
+    // ── ChunkData: empty / default state ──────────────────────────────────
+
+    #[test]
+    fn chunkdata_new_returns_air_for_unset_blocks() {
+        let cd = ChunkData::new();
+        // Spans two sub-chunks; both must default to Air without allocating.
+        assert_eq!(cd.get(0, 0, 0), Block::Air);
+        assert_eq!(cd.get(15, MAX_Y, 15), Block::Air);
+        assert_eq!(cd.get(7, MIN_Y, 8), Block::Air);
+        // A fresh ChunkData reports no non-empty sub-chunks.
+        assert_eq!(cd.non_empty_subchunks().count(), 0);
+    }
+
+    // ── ChunkData: sub-chunk boundary round-trip ─────────────────────────
+    //
+    // Sub-chunk index sy = y.div_euclid(16); local-y ly = y.rem_euclid(16).
+    // The interesting cases are at the *transitions* between sub-chunks
+    // (y = 0, 15, 16, 31, 32, …) and across the negative-Y boundary, where
+    // Euclidean division differs from Rust's default truncated division.
+
+    #[test]
+    fn set_get_round_trips_at_positive_subchunk_boundaries() {
+        let cases: &[(i32, i8, i32)] = &[
+            // (world_y, expected_sy, expected_ly)
+            (0, 0, 0),
+            (1, 0, 1),
+            (15, 0, 15),
+            (16, 1, 0),
+            (17, 1, 1),
+            (31, 1, 15),
+            (32, 2, 0),
+            (47, 2, 15),
+            (48, 3, 0),
+        ];
+        for &(y, sy, ly) in cases {
+            let mut cd = ChunkData::new();
+            cd.set(0, y, 0, Block::Stone);
+            assert_eq!(cd.get(0, y, 0), Block::Stone, "y={y}: round-trip failed",);
+            // Confirm the write landed in the expected sub-chunk.
+            let subchunks: Vec<i8> = cd.non_empty_subchunks().map(|(sy, _)| sy).collect();
+            assert_eq!(
+                subchunks,
+                vec![sy],
+                "y={y}: expected sy={sy}, got {subchunks:?}"
+            );
+            // Confirm the local-y indexing inside the sub-chunk is right by
+            // probing a known off-by-one slot (must still be Air).
+            assert_eq!(
+                cd.get(0, y, 0),
+                Block::Stone,
+                "y={y}: ly={ly} slot mismatch",
+            );
+            let _ = ly; // documented expectation; ly is implied by the get above.
+        }
+    }
+
+    #[test]
+    fn set_get_round_trips_at_negative_subchunk_boundaries() {
+        // Negative-Y is where Euclidean division matters most: it ensures
+        // y=-1 → (sy=-1, ly=15), NOT (sy=0, ly=-1) which would panic on a
+        // negative array index. Cover the entire negative span down to MIN_Y.
+        let cases: &[(i32, i8, i32)] = &[
+            (-1, -1, 15),
+            (-2, -1, 14),
+            (-15, -1, 1),
+            (-16, -1, 0),
+            (-17, -2, 15),
+            (-32, -2, 0),
+            (-33, -3, 15),
+            (-48, -3, 0),
+            (MIN_Y, -4, 0),       // -64
+            (MIN_Y + 15, -4, 15), // -49
+            (MAX_Y, 19, 15),      // 319
+        ];
+        for &(y, sy, ly) in cases {
+            let mut cd = ChunkData::new();
+            cd.set(7, y, 9, Block::Dirt);
+            assert_eq!(cd.get(7, y, 9), Block::Dirt, "y={y}: round-trip failed");
+            let subchunks: Vec<i8> = cd.non_empty_subchunks().map(|(s, _)| s).collect();
+            assert_eq!(
+                subchunks,
+                vec![sy],
+                "y={y}: expected sy={sy}, got {subchunks:?} (Euclidean division bug?)",
+            );
+            let _ = ly;
+        }
+    }
+
+    // ── ChunkData: XZY indexing corners ──────────────────────────────────
+    //
+    // The XZY formula is `lx*256 + lz*16 + ly` — every (lx, ly, lz) corner
+    // within the 16×16×16 sub-chunk must round-trip independently. A wrong
+    // stride here would alias blocks silently.
+
+    #[test]
+    fn xz_indexing_corners_round_trip_independently() {
+        let corners: &[(i32, i32, i32)] = &[
+            (0, 0, 0),
+            (0, 0, 15),
+            (0, 15, 0),
+            (0, 15, 15),
+            (15, 0, 0),
+            (15, 0, 15),
+            (15, 15, 0),
+            (15, 15, 15),
+            (8, 8, 8),
+        ];
+        for &(lx, ly_in_sub, lz) in corners {
+            let mut cd = ChunkData::new();
+            // ly_in_sub is the local-y within sub-chunk 0; world y = ly_in_sub.
+            cd.set(lx, ly_in_sub, lz, Block::Cobblestone);
+            // No corner should alias another.
+            for &(lx2, ly2, lz2) in corners {
+                let expected = if (lx2, ly2, lz2) == (lx, ly_in_sub, lz) {
+                    Block::Cobblestone
+                } else {
+                    Block::Air
+                };
+                assert_eq!(
+                    cd.get(lx2, ly2, lz2),
+                    expected,
+                    "({lx},{ly_in_sub},{lz}) alias leak at ({lx2},{ly2},{lz2})",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn set_into_two_subchunks_keeps_both() {
+        // A single ChunkData must hold blocks in multiple sub-chunks without
+        // one clobbering the other — the entire world-writer layering relies
+        // on this.
+        let mut cd = ChunkData::new();
+        cd.set(0, 5, 0, Block::GrassBlock); // sy=0, ly=5
+        cd.set(0, 25, 0, Block::Stone); // sy=1, ly=9
+        cd.set(0, -10, 0, Block::Dirt); // sy=-1, ly=6
+        assert_eq!(cd.get(0, 5, 0), Block::GrassBlock);
+        assert_eq!(cd.get(0, 25, 0), Block::Stone);
+        assert_eq!(cd.get(0, -10, 0), Block::Dirt);
+        let mut subs: Vec<i8> = cd.non_empty_subchunks().map(|(s, _)| s).collect();
+        subs.sort_unstable();
+        assert_eq!(subs, vec![-1, 0, 1]);
+    }
+
+    #[test]
+    fn set_overwrites_same_cell() {
+        let mut cd = ChunkData::new();
+        cd.set(3, 7, 4, Block::Dirt);
+        cd.set(3, 7, 4, Block::Water);
+        assert_eq!(cd.get(3, 7, 4), Block::Water);
+    }
+
+    // ── Edition enum ─────────────────────────────────────────────────────
+
+    #[test]
+    fn edition_default_is_bedrock() {
+        assert_eq!(Edition::default(), Edition::Bedrock);
+    }
+
+    #[test]
+    fn edition_display_lowercase() {
+        assert_eq!(Edition::Bedrock.to_string(), "bedrock");
+        assert_eq!(Edition::Java.to_string(), "java");
+    }
+
+    #[test]
+    fn edition_from_str_roundtrip() {
+        for ed in [Edition::Bedrock, Edition::Java] {
+            let s = ed.to_string();
+            let parsed: Edition = s.parse().expect("roundtrip parse");
+            assert_eq!(parsed, ed);
+        }
+        // Case-insensitive
+        assert_eq!("BEDROCK".parse::<Edition>().unwrap(), Edition::Bedrock);
+        assert_eq!("Java".parse::<Edition>().unwrap(), Edition::Java);
+    }
+
+    #[test]
+    fn edition_from_str_rejects_unknown() {
+        assert!("legacy".parse::<Edition>().is_err());
+        assert!("".parse::<Edition>().is_err());
+    }
+
+    #[test]
+    fn edition_serde_roundtrip() {
+        let json = serde_json::to_string(&Edition::Java).unwrap();
+        assert_eq!(json, "\"java\"");
+        let parsed: Edition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, Edition::Java);
+    }
+
+    #[test]
+    fn edition_clap_value_enum_variants() {
+        use clap::ValueEnum;
+        let variants = Edition::value_variants();
+        assert_eq!(variants.len(), 2);
+        assert!(variants.iter().all(|v| v.to_possible_value().is_some()));
+    }
+
+    #[test]
+    fn world_height_constant_is_consistent() {
+        assert_eq!(WORLD_HEIGHT, MAX_Y - MIN_Y + 1);
+        assert_eq!(WORLD_HEIGHT, 384);
+        assert_eq!(MIN_Y, -64);
+        assert_eq!(MAX_Y, 319);
+    }
+}

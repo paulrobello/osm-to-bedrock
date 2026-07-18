@@ -83,3 +83,155 @@ pub struct TerrainParams {
     /// Path to SRTM HGT file(s).  If None, terrain is flat at sea_level.
     pub elevation: Option<PathBuf>,
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+//
+// `params.rs` is intentionally a plain data module: two structs + re-exports
+// from `par-osm-rust`. These tests pin the *public shape* of the structs so
+// that adding a required field without a default is caught at the call sites
+// in `main.rs`, `server.rs`, and the lib.rs doctest — all of which compile
+// against the patterns asserted here. The re-export tests guard against
+// silent breakage when `par-osm-rust` shifts its public `sources`/`overture`
+// API.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::Edition;
+
+    // ── ConvertParams shape ──────────────────────────────────────────────
+
+    #[test]
+    fn convert_params_constructs_with_all_documented_fields() {
+        // This is the same shape required by the lib.rs doctest; if a field
+        // is added without updating this construction, compilation fails here
+        // AND in the doctest, surfacing the contract change.
+        let params = ConvertParams {
+            input: Some(PathBuf::from("map.osm.pbf")),
+            output: PathBuf::from("out"),
+            edition: Edition::Bedrock,
+            scale: 1.0,
+            sea_level: 65,
+            building_height: 8,
+            wall_straighten_threshold: 1,
+            spawn_x: None,
+            spawn_y: None,
+            spawn_z: None,
+            spawn_lat: None,
+            spawn_lon: None,
+            signs: false,
+            address_signs: false,
+            poi_markers: false,
+            poi_decorations: true,
+            nature_decorations: true,
+            filter: crate::filter::FeatureFilter::default(),
+            elevation: None,
+            vertical_scale: 1.0,
+            elevation_smoothing: 1,
+            surface_thickness: 4,
+        };
+        // Spot-check the values that downstream pipeline math depends on.
+        assert_eq!(params.sea_level, 65);
+        assert_eq!(params.building_height, 8);
+        assert!(params.scale > 0.0);
+        assert!(params.vertical_scale > 0.0);
+        assert_eq!(params.edition, Edition::Bedrock);
+        // The filter must default to all-categories-enabled.
+        assert!(params.filter.roads && params.filter.buildings);
+    }
+
+    #[test]
+    fn convert_params_supports_java_edition() {
+        let params = ConvertParams {
+            edition: Edition::Java,
+            ..minimal_convert_params()
+        };
+        assert_eq!(params.edition, Edition::Java);
+    }
+
+    // ── TerrainParams shape ──────────────────────────────────────────────
+
+    #[test]
+    fn terrain_params_constructs_with_all_documented_fields() {
+        let params = TerrainParams {
+            bbox: (1.0, 2.0, 3.0, 4.0),
+            output: PathBuf::from("terrain_out"),
+            edition: Edition::Bedrock,
+            scale: 1.0,
+            sea_level: 65,
+            vertical_scale: 1.0,
+            snow_line: 80,
+            elevation_smoothing: 1,
+            surface_thickness: 4,
+            spawn_x: None,
+            spawn_y: None,
+            spawn_z: None,
+            spawn_lat: None,
+            spawn_lon: None,
+            elevation: None,
+        };
+        // bbox ordering is (min_lat, min_lon, max_lat, max_lon).
+        assert_eq!(params.bbox, (1.0, 2.0, 3.0, 4.0));
+        assert_eq!(params.snow_line, 80);
+    }
+
+    // ── par-osm-rust re-exports ──────────────────────────────────────────
+
+    #[test]
+    fn source_options_default_re_export_compiles() {
+        // SourceOptions comes from par_osm_rust::sources. If the upstream
+        // crate removes it or renames it, this fails to compile, surfacing
+        // the breakage here rather than at a downstream call site.
+        let _opts: SourceOptions = SourceOptions::default();
+    }
+
+    #[test]
+    fn overture_params_re_export_compiles() {
+        // OvertureParams is re-exported from par_osm_rust::overture. Touch
+        // the type name so a rename upstream surfaces here.
+        fn _accepts(_p: OvertureParams) {}
+        let _ = std::any::TypeId::of::<OvertureParams>();
+    }
+
+    #[test]
+    fn poi_source_mode_and_overture_failure_mode_re_exports_compile() {
+        // These two enums are the most commonly used re-exports from the
+        // `sources` module; pin them at the type level.
+        let _ = std::any::TypeId::of::<PoiSourceMode>();
+        let _ = std::any::TypeId::of::<OvertureFailureMode>();
+        let _ = std::any::TypeId::of::<SourceStatus>();
+        let _ = std::any::TypeId::of::<OvertureTheme>();
+        let _ = std::any::TypeId::of::<ThemePriority>();
+    }
+
+    // ── Test helper ──────────────────────────────────────────────────────
+
+    /// Minimal `ConvertParams` for tests that only care about one field.
+    /// Mirrors the lib.rs doctest defaults.
+    fn minimal_convert_params() -> ConvertParams {
+        ConvertParams {
+            input: None,
+            output: PathBuf::from("out"),
+            edition: Edition::default(),
+            scale: 1.0,
+            sea_level: 65,
+            building_height: 8,
+            wall_straighten_threshold: 1,
+            spawn_x: None,
+            spawn_y: None,
+            spawn_z: None,
+            spawn_lat: None,
+            spawn_lon: None,
+            signs: false,
+            address_signs: false,
+            poi_markers: false,
+            poi_decorations: false,
+            nature_decorations: false,
+            filter: crate::filter::FeatureFilter::default(),
+            elevation: None,
+            vertical_scale: 1.0,
+            elevation_smoothing: 1,
+            surface_thickness: 4,
+        }
+    }
+}

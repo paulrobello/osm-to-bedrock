@@ -1667,6 +1667,48 @@ pub fn run_conversion(params: &ConvertParams, progress_cb: &dyn Fn(f32, &str)) -
 ///
 /// Used by Overpass-based flows where OSM data has already been fetched and
 /// does not need to be read from a file.
+///
+/// # Example
+///
+/// ```no_run
+/// use osm_to_bedrock::filter::FeatureFilter;
+/// use osm_to_bedrock::osm::OsmData;
+/// use osm_to_bedrock::params::ConvertParams;
+/// use osm_to_bedrock::pipeline::run_conversion_from_data;
+/// use osm_to_bedrock::world::Edition;
+/// use std::path::PathBuf;
+///
+/// // `data` would normally come from `osm::parse_osm_file` or an Overpass fetch.
+/// let data: OsmData = todo!();
+/// let params = ConvertParams {
+///     input: None,
+///     output: PathBuf::from("MyWorld"),
+///     edition: Edition::default(),
+///     scale: 1.0,
+///     sea_level: 65,
+///     building_height: 8,
+///     wall_straighten_threshold: 1,
+///     spawn_x: None,
+///     spawn_y: None,
+///     spawn_z: None,
+///     spawn_lat: None,
+///     spawn_lon: None,
+///     signs: false,
+///     address_signs: false,
+///     poi_markers: false,
+///     poi_decorations: true,
+///     nature_decorations: true,
+///     filter: FeatureFilter::default(),
+///     elevation: None,
+///     vertical_scale: 1.0,
+///     elevation_smoothing: 1,
+///     surface_thickness: 4,
+/// };
+///
+/// run_conversion_from_data(data, &params, &|progress, msg| {
+///     println!("[{:3.0}%] {msg}", progress * 100.0);
+/// }).expect("conversion failed");
+/// ```
 pub fn run_conversion_from_data(
     data: osm::OsmData,
     params: &ConvertParams,
