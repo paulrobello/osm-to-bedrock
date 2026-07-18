@@ -159,8 +159,8 @@ pub fn build_metadata(
     });
 
     let features = FeatureCounts {
-        nodes: data.nodes.len(),
-        ways: data.ways.len(),
+        nodes: data.nodes().len(),
+        ways: data.ways().len(),
         relations: data.relations.len(),
         poi_nodes: data.poi_nodes.len(),
         addr_nodes: data.addr_nodes.len(),
@@ -240,22 +240,21 @@ mod tests {
             elevation_smoothing: 1,
             surface_thickness: 4,
         };
-        let data = OsmData {
-            nodes: HashMap::from([(
+        let data = OsmData::new(
+            HashMap::from([(
                 1,
                 crate::osm::OsmNode {
                     lat: 51.5,
                     lon: -0.1,
                 },
             )]),
-            ways: vec![],
-            ways_by_id: HashMap::new(),
-            relations: vec![],
-            bounds: Some((51.5, -0.1, 51.52, -0.08)),
-            poi_nodes: vec![],
-            addr_nodes: vec![],
-            tree_nodes: vec![],
-        };
+            vec![],
+            vec![],
+            Some((51.5, -0.1, 51.52, -0.08)),
+            vec![],
+            vec![],
+            vec![],
+        );
         let timer = MetadataTimer::start();
         let meta = build_metadata(&params, &data, &timer, None);
 
@@ -308,16 +307,7 @@ mod tests {
             elevation_smoothing: 1,
             surface_thickness: 4,
         };
-        let data = OsmData {
-            nodes: HashMap::new(),
-            ways: vec![],
-            ways_by_id: HashMap::new(),
-            relations: vec![],
-            bounds: None,
-            poi_nodes: vec![],
-            addr_nodes: vec![],
-            tree_nodes: vec![],
-        };
+        let data = OsmData::new(HashMap::new(), vec![], vec![], None, vec![], vec![], vec![]);
         let timer = MetadataTimer::start();
         let meta = build_metadata(&params, &data, &timer, None);
         write_metadata(dir.path(), &meta).unwrap();

@@ -34,7 +34,7 @@ _Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 54 of 
 - Extracted a shared `ChunkStore` struct used by both `BedrockWorld` and `JavaWorld` (−196 duplicated lines).
 - Extracted 11 per-layer `render_*` helpers from `render_osm_features` (558 → 34 LOC orchestrator).
 - `NEXT_PUBLIC_API_URL` renamed to server-only `RUST_API_URL` (browser code never read it; the value is no longer baked into the client bundle).
-- `par-osm-rust` pinned to `=0.1.1`; the seven re-export shim modules are now documented as such.
+- **`par-osm-rust` bumped `=0.1.1` → `=0.2.1` (ARC-011 complete).** `source_options` (the seven POI/Overture CLI string parsers + their tests) is donated upstream and consumed here via a `pub use par_osm_rust::source_options::*;` re-export shim. 0.2.x encapsulated `OsmData`, so the terrain/geometry/metadata/GeoJSON paths now read `nodes()` / `ways()` / `ways_by_id()` instead of the private fields, `OvertureParams` literals set `cache_ttl_secs: None`, and test fixtures route through `OsmData::new`.
 - Documentation synced to the post-refactor reality (`CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, `docs/DEVELOPER_INFO.md`, `docs/CLI.md`, `docs/WEB_UI.md`, `CONTRIBUTING.md`).
 
 ### Removed

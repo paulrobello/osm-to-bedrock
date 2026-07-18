@@ -97,7 +97,7 @@ pub fn run_conversion(params: &ConvertParams, progress_cb: &dyn Fn(f32, &str)) -
     log::info!("Reading {}", path.display());
     let source_info = crate::metadata::source_info(path).ok();
     let data = crate::osm::parse_osm_file(path)?;
-    if data.ways.is_empty() {
+    if data.ways().is_empty() {
         bail!("No ways found in OSM file.");
     }
 
@@ -173,7 +173,7 @@ pub fn run_conversion_from_data(
     params: &ConvertParams,
     progress_cb: &dyn Fn(f32, &str),
 ) -> Result<()> {
-    if data.ways.is_empty() {
+    if data.ways().is_empty() {
         bail!("No ways found in OSM data.");
     }
     let timer = crate::metadata::MetadataTimer::start();

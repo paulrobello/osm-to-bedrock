@@ -74,14 +74,14 @@ fn is_closed_way(node_refs: &[i64]) -> bool {
 /// Coordinate order follows the GeoJSON spec: `[longitude, latitude]`.
 pub fn to_geojson(data: &OsmData) -> FeatureCollection {
     let mut features: Vec<Feature> = data
-        .ways
+        .ways()
         .iter()
         .filter_map(|way| {
             // Resolve node refs → [lon, lat] coordinate pairs.
             let coords: Vec<Vec<f64>> = way
                 .node_refs
                 .iter()
-                .filter_map(|id| data.nodes.get(id))
+                .filter_map(|id| data.nodes().get(id))
                 .map(|node| vec![node.lon, node.lat])
                 .collect();
 
@@ -139,12 +139,12 @@ pub fn to_geojson(data: &OsmData) -> FeatureCollection {
         let mut inners: Vec<Vec<Vec<f64>>> = Vec::new();
 
         for member in &rel.members {
-            if let Some(&idx) = data.ways_by_id.get(&member.way_id) {
-                let way = &data.ways[idx];
+            if let Some(&idx) = data.ways_by_id().get(&member.way_id) {
+                let way = &data.ways()[idx];
                 let coords: Vec<Vec<f64>> = way
                     .node_refs
                     .iter()
-                    .filter_map(|id| data.nodes.get(id))
+                    .filter_map(|id| data.nodes().get(id))
                     .map(|node| vec![node.lon, node.lat])
                     .collect();
                 if coords.len() < 3 {
@@ -235,16 +235,15 @@ mod tests {
         for (id, lat, lon) in nodes {
             node_map.insert(id, OsmNode { lat, lon });
         }
-        OsmData {
-            nodes: node_map,
+        OsmData::new(
+            node_map,
             ways,
-            ways_by_id: HashMap::new(),
-            relations: Vec::new(),
-            bounds: None,
-            poi_nodes: Vec::new(),
-            addr_nodes: Vec::new(),
-            tree_nodes: Vec::new(),
-        }
+            Vec::new(),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
     }
 
     // ── classify_way ─────────────────────────────────────────────────────
@@ -340,6 +339,7 @@ mod tests {
     #[test]
     fn open_way_becomes_linestring() {
         let way = OsmWay {
+            id: 1,
             tags: {
                 let mut t = HashMap::new();
                 t.insert("highway".to_string(), "path".to_string());
@@ -359,6 +359,7 @@ mod tests {
     fn closed_way_becomes_polygon() {
         // Square: nodes 1,2,3,4,1
         let way = OsmWay {
+            id: 1,
             tags: {
                 let mut t = HashMap::new();
                 t.insert("building".to_string(), "yes".to_string());
@@ -385,6 +386,7 @@ mod tests {
     #[test]
     fn way_with_missing_nodes_is_skipped() {
         let way = OsmWay {
+            id: 1,
             tags: HashMap::new(),
             node_refs: vec![99], // node 99 doesn't exist
         };
@@ -397,6 +399,7 @@ mod tests {
     #[test]
     fn properties_include_type_and_node_count() {
         let way = OsmWay {
+            id: 1,
             tags: {
                 let mut t = HashMap::new();
                 t.insert("highway".to_string(), "primary".to_string());
@@ -418,6 +421,7 @@ mod tests {
     #[test]
     fn coordinates_are_lon_lat_order() {
         let way = OsmWay {
+            id: 1,
             tags: HashMap::new(),
             node_refs: vec![1, 2],
         };
@@ -445,6 +449,7 @@ mod tests {
     #[test]
     fn polygon_ring_is_closed() {
         let way = OsmWay {
+            id: 1,
             tags: HashMap::new(),
             node_refs: vec![1, 2, 3, 4, 1],
         };

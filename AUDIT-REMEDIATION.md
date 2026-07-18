@@ -26,15 +26,15 @@ and committed to `main`:
   longer contends with worker progress writes. `lock_jobs` is removed (DashMap
   shard locks don't poison — SEC-006 is now structural).
 
-**Updated count**: **55 of 58** unique issues resolved. Remaining open items
-are the two maintainer/outward-facing ones (DOC-003 crates.io publish,
-ARC-011 upstream donation) plus the optional low-priority skips. DOC-009 is
-now closed (decision: keep `install-hooks` restricted to `pre-commit` — it is
-one of the project's standard Makefile targets, and the restricted form is
-correct). **Verification**: `make checkall` exit 0 — **251 Rust tests**
-(240 lib + 9 integration + 2 doctests) + **21 web tests**, clippy/fmt/
-tsc/build clean. (Rust count dropped 254→251: −6 retired guard tests, +3
-streaming tests.)
+**Updated count**: **56 of 58** unique issues resolved. ARC-011 is now closed
+(`source_options` donated upstream into `par-osm-rust` 0.2.x and consumed here
+via a re-export shim); the only remaining substantive item is **DOC-003**
+(crates.io publish of `osm_to_bedrock`), plus the optional low-priority skips.
+DOC-009 is closed (decision: keep `install-hooks` restricted to `pre-commit`).
+**Verification**: `make checkall` exit 0 — **248 Rust tests** (237 lib + 9
+integration + 2 doctests) + **21 web tests**, clippy/fmt/tsc/build clean.
+(Rust count 251→248: −3 `source_options` tests that moved upstream with the
+donation shim.)
 
 ---
 
@@ -141,10 +141,10 @@ streaming tests.)
 - **What remains**: `cargo login` + `cargo publish` (and the release workflow already has an "already-published" skip). Then remove the demotion note. Publishing is an outward-facing action requiring explicit confirmation — not done autonomously.
 - **Estimated effort**: small (after the publish decision).
 
-### [ARC-011] Donate `source_options.rs` upstream (donation shipped in 0.2.0; downstream blocked on a 0.2.1 accessor release)
-- The donation shipped: the maintainer published `par-osm-rust` **0.2.0** (it includes `source_options` plus the crate's own audit remediation). However, 0.2.0 also encapsulated `OsmData` (`nodes` / `ways` / `ways_by_id` → `pub(crate)`) with no public read accessors, and osm-to-bedrock's terrain/geometry pipeline needs node-by-id lookup, indexed `ways`, and `ways_by_id` (25 sites) — so osm-to-bedrock cannot compile against 0.2.0 as-is. It also needs `cache_ttl_secs: None` added at 4 `OvertureParams` construction sites (new field in 0.2.0).
-- **0.2.1 prepared locally (`par-osm-rust@a104317`):** adds three read views matching the field types — `nodes() -> &HashMap<i64, OsmNode>`, `ways() -> &[OsmWay]`, `ways_by_id() -> &HashMap<i64, usize>` (patch bump from 0.2.0; its `make checkall` green). These resolve all 29 downstream errors — the calls are reference-identical to the old field access, so there is no behavioral change.
-- **Remaining (outward-facing, needs confirmation):** publish `par-osm-rust` 0.2.1; then bump osm-to-bedrock `=0.1.1` → `=0.2.1`, migrate the 25 field reads to accessor calls + add `cache_ttl_secs: None` (×4) + swap `source_options.rs` to the re-export shim, `make checkall`, commit.
+### [ARC-011] Donate `source_options.rs` upstream (✅ resolved — consumed via re-export shim against `par-osm-rust` 0.2.1)
+- `par-osm-rust` 0.2.0 shipped the donated `source_options` but also encapsulated `OsmData` (`nodes` / `ways` / `ways_by_id` → `pub(crate)`) without read accessors, which blocked osm-to-bedrock — node-by-id lookup is fundamental to the terrain/geometry pipeline. `par-osm-rust` **0.2.1** (local `a104317`, published via `publish-crates.yml`) added three read views — `nodes()`, `ways()`, `ways_by_id()` — matching the field types exactly.
+- osm-to-bedrock now pins `par-osm-rust = "=0.2.1"`. The 25 field reads (8 `nodes` + 15 `ways` + 2 `ways_by_id`) are migrated to accessor calls, `cache_ttl_secs: None` added at the 4 `OvertureParams` literals, test fixtures routed through `OsmData::new`, and `src/source_options.rs` is now a 4-line `pub use par_osm_rust::source_options::*;` re-export shim. Reference-identical to the old field access — no behavioral change.
+- **Verification**: `make checkall` exit 0 — 248 Rust tests + 21 web tests pass.
 
 ### [DOC-009] `install-hooks` target (✅ resolved — decision: keep, restricted to `pre-commit`)
 - The stale graphify hooks are deleted and `install-hooks` only arms `pre-commit`. Decision taken: **keep the target** rather than drop it — `install-hooks` is one of the project's standard Makefile targets, and the restricted form is correct (the original defect, silently re-enabling graphify on `make install-hooks`, is gone). No further code change required beyond the deletion + CHANGELOG `Removed` entry already shipped.
@@ -193,5 +193,5 @@ Full per-commit detail: `git log --stat ba458dc..HEAD`.
 
 1. **Review the deferred items** above (ARC-001 full streaming writer is the only Critical-adjacent follow-up; the OOM guard already makes it safe).
 2. **Re-run `/audit`** to get a fresh AUDIT.md reflecting current state (the structural debt that drove most findings is gone; the codebase is materially smaller per-file and test-covered).
-3. **Decide on the maintainer actions**: crates.io publish (DOC-003); ARC-011 — `source_options` shipped in `par-osm-rust` 0.2.0, but 0.2.0's `OsmData` encapsulation omitted read accessors so osm-to-bedrock can't consume it yet; 0.2.1 with the accessors is prepped locally (`par-osm-rust@a104317`), awaiting publish. DOC-009 is resolved (keep `install-hooks`).
+3. **Decide on the maintainer actions**: crates.io publish (DOC-003) is the only remaining substantive item. ARC-011 is resolved (consumed via shim against `par-osm-rust` 0.2.1); DOC-009 is resolved (keep `install-hooks`).
 4. **Consider** a follow-up to clear the 40 `cargo doc` intra-doc-link warnings and (optionally) the ARC-010 DashMap migration.

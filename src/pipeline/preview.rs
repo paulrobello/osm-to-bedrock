@@ -56,7 +56,7 @@ pub fn run_conversion_preview(
     })?;
     log::info!("Reading {}", path.display());
     let data = crate::osm::parse_osm_file(path)?;
-    if data.ways.is_empty() {
+    if data.ways().is_empty() {
         bail!("No ways found in OSM file.");
     }
     run_pipeline(data, params, progress_cb)
@@ -71,7 +71,7 @@ pub fn run_preview_from_data(
     params: &ConvertParams,
     progress_cb: &dyn Fn(f32, &str),
 ) -> Result<(Box<dyn WorldWriter>, i32, i32, i32)> {
-    if data.ways.is_empty() {
+    if data.ways().is_empty() {
         bail!("No ways found in OSM data.");
     }
     run_pipeline(data, params, progress_cb)
@@ -88,7 +88,7 @@ pub fn run_surface_preview(
     params: &ConvertParams,
     progress_cb: &dyn Fn(f32, &str),
 ) -> Result<(Vec<(i32, i32, i32, String)>, i32, i32, i32)> {
-    if data.ways.is_empty() {
+    if data.ways().is_empty() {
         bail!("No ways found in OSM data.");
     }
 
@@ -447,7 +447,7 @@ fn run_pipeline(
 
     // Pass 3: overlay OSM features
     progress_cb(0.40, "Processing OSM features");
-    log::info!("Processing {} ways...", data.ways.len());
+    log::info!("Processing {} ways...", data.ways().len());
 
     let resolved_ways = resolve_ways(&data, &conv);
     let resolved_relations = resolve_relations(&data, &conv);

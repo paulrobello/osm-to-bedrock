@@ -73,9 +73,9 @@ pub(super) fn compute_terrain_bounds(
 ) -> (i32, i32, i32, i32) {
     let mut xs: Vec<i32> = Vec::new();
     let mut zs: Vec<i32> = Vec::new();
-    for way in &data.ways {
+    for way in data.ways() {
         for id in &way.node_refs {
-            if let Some(node) = data.nodes.get(id) {
+            if let Some(node) = data.nodes().get(id) {
                 let (bx, bz) = conv.to_block_xz(node.lat, node.lon);
                 xs.push(bx);
                 zs.push(bz);
@@ -110,12 +110,12 @@ pub(super) fn resolve_relations<'a>(
             let mut outers: Vec<Vec<(i32, i32)>> = Vec::new();
             let mut inners: Vec<Vec<(i32, i32)>> = Vec::new();
             for member in &rel.members {
-                if let Some(&idx) = data.ways_by_id.get(&member.way_id) {
-                    let way = &data.ways[idx];
+                if let Some(&idx) = data.ways_by_id().get(&member.way_id) {
+                    let way = &data.ways()[idx];
                     let pts: Vec<(i32, i32)> = way
                         .node_refs
                         .iter()
-                        .filter_map(|id| data.nodes.get(id))
+                        .filter_map(|id| data.nodes().get(id))
                         .map(|n| conv.to_block_xz(n.lat, n.lon))
                         .collect();
                     if pts.len() < 3 {
@@ -145,13 +145,13 @@ pub(super) fn resolve_ways<'a>(
     data: &'a osm::OsmData,
     conv: &CoordConverter,
 ) -> Vec<(&'a osm::OsmWay, Vec<(i32, i32)>)> {
-    data.ways
+    data.ways()
         .iter()
         .map(|way| {
             let pts: Vec<(i32, i32)> = way
                 .node_refs
                 .iter()
-                .filter_map(|id| data.nodes.get(id))
+                .filter_map(|id| data.nodes().get(id))
                 .map(|n| conv.to_block_xz(n.lat, n.lon))
                 .collect();
             (way, pts)

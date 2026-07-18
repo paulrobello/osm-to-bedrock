@@ -188,6 +188,7 @@ pub fn run_fetch_convert(args: &FetchConvertArgs, config: &Config) -> Result<()>
             themes,
             priority,
             timeout_secs: overture_timeout,
+            cache_ttl_secs: None,
         },
         poi_source_mode,
         overture_failure_mode,
@@ -259,6 +260,7 @@ pub fn run_overture_convert(args: &OvertureConvertArgs, config: &Config) -> Resu
         themes,
         priority: HashMap::new(),
         timeout_secs: args.overture_timeout,
+        cache_ttl_secs: None,
     };
 
     let data = overture::fetch_overture_data(bbox, &overture_params, &mut |progress, msg| {

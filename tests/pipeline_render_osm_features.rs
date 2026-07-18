@@ -219,12 +219,13 @@ fn mk_node(id: i64, dlat: f64, dlon: f64) -> (i64, OsmNode) {
     )
 }
 
-fn mk_tagged_way(tags: &[(&str, &str)], node_refs: &[i64]) -> OsmWay {
+fn mk_tagged_way(id: i64, tags: &[(&str, &str)], node_refs: &[i64]) -> OsmWay {
     let mut t = HashMap::new();
     for (k, v) in tags {
         t.insert((*k).to_string(), (*v).to_string());
     }
     OsmWay {
+        id,
         tags: t,
         node_refs: node_refs.to_vec(),
     }
@@ -272,16 +273,18 @@ fn synthetic_osm_data() -> OsmData {
     let ways: Vec<OsmWay> = vec![
         // Road (open way). References nodes 100, 101, 102.
         mk_tagged_way(
+            1,
             &[("highway", "residential"), ("name", "Test Ave")],
             &[100, 101, 102],
         ),
         // Building (closed polygon). References nodes 200..203; first repeats at end.
         mk_tagged_way(
+            2,
             &[("building", "yes"), ("building:levels", "1")],
             &[200, 201, 202, 203, 200],
         ),
         // Water (closed polygon). References nodes 300..303; first repeats at end.
-        mk_tagged_way(&[("natural", "water")], &[300, 301, 302, 303, 300]),
+        mk_tagged_way(3, &[("natural", "water")], &[300, 301, 302, 303, 300]),
     ];
 
     // The bounds drive the CoordConverter origin (center). Keep them symmetric
@@ -296,16 +299,15 @@ fn synthetic_osm_data() -> OsmData {
         max_block_lon * ONE_BLOCK_DEG,
     );
 
-    OsmData {
+    OsmData::new(
         nodes,
-        ways_by_id: [(1, 0), (2, 1), (3, 2)].into_iter().collect(),
         ways,
-        relations: Vec::new(),
-        bounds: Some(bounds),
-        poi_nodes: Vec::new(),
-        addr_nodes: Vec::new(),
-        tree_nodes: Vec::new(),
-    }
+        Vec::new(),
+        Some(bounds),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
 }
 
 // ── Hand-built RenderContext for direct-orchestrator tests ────────────────────
@@ -324,13 +326,13 @@ fn with_render_context<R>(
     let conv = CoordConverter::new(0.0, 0.0, params.scale);
     // Resolve ways: same logic as pipeline::resolve_ways.
     let resolved_ways: Vec<(&OsmWay, Vec<(i32, i32)>)> = data
-        .ways
+        .ways()
         .iter()
         .map(|way| {
             let pts: Vec<(i32, i32)> = way
                 .node_refs
                 .iter()
-                .filter_map(|id| data.nodes.get(id))
+                .filter_map(|id| data.nodes().get(id))
                 .map(|n| conv.to_block_xz(n.lat, n.lon))
                 .collect();
             (way, pts)
@@ -687,13 +689,13 @@ fn process_tile_writes_terrain_column_for_chunk_in_bounds() {
     let params = default_params(Edition::Bedrock);
     let conv = CoordConverter::new(0.0, 0.0, params.scale);
     let resolved_ways: Vec<(&OsmWay, Vec<(i32, i32)>)> = data
-        .ways
+        .ways()
         .iter()
         .map(|w| {
             let pts: Vec<(i32, i32)> = w
                 .node_refs
                 .iter()
-                .filter_map(|id| data.nodes.get(id))
+                .filter_map(|id| data.nodes().get(id))
                 .map(|n| conv.to_block_xz(n.lat, n.lon))
                 .collect();
             (w, pts)

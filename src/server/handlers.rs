@@ -253,8 +253,8 @@ pub(crate) async fn parse_pbf_handler(
                 water,
                 landuse,
                 other,
-                nodes: osm_data.nodes.len(),
-                ways: osm_data.ways.len(),
+                nodes: osm_data.nodes().len(),
+                ways: osm_data.ways().len(),
             };
 
             let bounds = osm_data
@@ -336,8 +336,8 @@ pub(crate) async fn fetch_preview_handler(
                 water,
                 landuse,
                 other,
-                nodes: osm_data.nodes.len(),
-                ways: osm_data.ways.len(),
+                nodes: osm_data.nodes().len(),
+                ways: osm_data.ways().len(),
             };
             let bounds = osm_data
                 .bounds
@@ -799,6 +799,7 @@ pub(crate) async fn fetch_convert_handler(
                 themes: parsed_source_options.themes,
                 priority: parsed_source_options.priority,
                 timeout_secs: req_overture_timeout,
+                cache_ttl_secs: None,
             },
             poi_source_mode: if req_overture {
                 parsed_source_options.requested_poi_source_mode
@@ -1050,6 +1051,7 @@ pub(crate) async fn overture_convert_handler(
             themes,
             priority: std::collections::HashMap::new(),
             timeout_secs,
+            cache_ttl_secs: None,
         };
 
         let jobs_ov = jobs.clone();
@@ -1083,7 +1085,7 @@ pub(crate) async fn overture_convert_handler(
         };
 
         // Check if any data was actually returned.
-        if data.ways.is_empty() && data.poi_nodes.is_empty() && data.addr_nodes.is_empty() {
+        if data.ways().is_empty() && data.poi_nodes.is_empty() && data.addr_nodes.is_empty() {
             set_job_error(
                 &jobs,
                 &jid,

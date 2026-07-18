@@ -186,21 +186,20 @@ mod tests {
         let mut tags = HashMap::new();
         tags.insert("highway".to_string(), "residential".to_string());
         let way = OsmWay {
+            id: 1,
             tags,
             node_refs: vec![1, 2],
         };
-        // ways_by_id now maps way_id -> index into ways
-        let ways_by_id = [(1i64, 0usize)].into_iter().collect();
-        let data = OsmData {
+        // ways_by_id is seeded from each way's `id` by OsmData::new.
+        let data = OsmData::new(
             nodes,
-            ways: vec![way],
-            ways_by_id,
-            relations: vec![],
-            bounds: Some((51.5, -0.1, 51.5, -0.09)),
-            poi_nodes: vec![],
-            addr_nodes: vec![],
-            tree_nodes: vec![],
-        };
+            vec![way],
+            vec![],
+            Some((51.5, -0.1, 51.5, -0.09)),
+            vec![],
+            vec![],
+            vec![],
+        );
 
         let tmp = TempDir::new().unwrap();
         let convert_params = ConvertParams {
@@ -244,6 +243,7 @@ mod tests {
 
         let make_way = |tags: Vec<(&str, &str)>| -> OsmWay {
             OsmWay {
+                id: 0,
                 tags: tags
                     .into_iter()
                     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -296,6 +296,7 @@ mod tests {
 
         let make_way = |tags: Vec<(&str, &str)>| -> OsmWay {
             OsmWay {
+                id: 0,
                 tags: tags
                     .into_iter()
                     .map(|(k, v)| (k.to_string(), v.to_string()))
