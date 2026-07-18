@@ -44,7 +44,19 @@ The Makefile wraps the common commands:
 | `make docker-run` | `docker run --rm -p 3002:3002 -p 8031:8031 --name osm-to-bedrock osm-to-bedrock` |
 | `make docker-stop` | `docker stop osm-to-bedrock` (no-op if not running) |
 
-> **Note:** `make docker-run` in the Makefile does **not** inject an API key. It works for local testing because the container's entrypoint binds to `0.0.0.0`, which the Rust binary refuses without a key. For local Docker, set `OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1` to acknowledge the risk, or extend the target to inject a key.
+> **Note:** `make docker-run` in the Makefile does **not** inject an API key, and the container's entrypoint binds the Rust API to `0.0.0.0`. The Rust binary's safe-bind guard therefore refuses to start, so `make docker-run` exits immediately unless you pass one of the following:
+
+```bash
+# Option A — acknowledge the risk and run unauthenticated (local testing only)
+docker run --rm -p 3002:3002 -p 8031:8031 \
+  -e OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1 --name osm-to-bedrock osm-to-bedrock
+
+# Option B — inject a real key (recommended for any non-loopback exposure)
+docker run --rm -p 3002:3002 -p 8031:8031 \
+  -e OSM_TO_BEDROCK_API_KEY="$(openssl rand -hex 32)" --name osm-to-bedrock osm-to-bedrock
+```
+
+Avoid Option A outside an isolated local network — the API accepts up to 500 MiB uploads (`/convert`) and has no per-user rate limiting, so an open bind is a DoS and resource-exhaustion risk.
 
 ## Environment Variables
 

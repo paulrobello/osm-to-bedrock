@@ -73,9 +73,15 @@ my-world.mcworld  (ZIP archive — rename to .zip to extract)
 └── world_resource_packs.json    # Optional
 ```
 
-> **📝 Note:** Worlds produced by `osm-to-bedrock` contain `level.dat`, the `db/` directory,
-> and a `world_info.json` file (conversion metadata). Optional fields such as `levelname.txt`,
-> `world_icon.jpeg`, and pack manifests are not generated but may be added manually.
+> **📝 Note:** `osm-to-bedrock` Bedrock output contains `level.dat`, the `db/` LevelDB directory,
+> and a `world_info.json` sidecar (conversion parameters, source hash, feature counts, timing).
+> Optional fields such as `levelname.txt`, `world_icon.jpeg`, and pack manifests are not generated
+> but may be added manually. The CLI leaves the world as a plain directory — zip the folder and
+> rename to `.mcworld` to import it, or use the HTTP server (`serve` / `/convert` family), which
+> packages it as `.mcworld` automatically. The spawn point is derived from the input bbox
+> (or set explicitly via `--spawn-x/y/z` / `--spawn-lat/lon`) and stored in `level.dat` as
+> `SpawnX/Y/Z`. Java Edition conversions produce a `.zip` archive (region files + `level.dat` +
+> `session.lock`) rather than `.mcworld`; see [CLI Reference](./CLI.md).
 
 You can verify this by renaming any `.mcworld` file to `.zip` and extracting with any archive
 tool (7-Zip, WinRAR, macOS Archive Utility, etc.).
@@ -207,6 +213,13 @@ mv world.zip world.mcworld
 ```
 
 Then double-click to import on Windows, or transfer to mobile as above.
+
+> **⚠️ Warning:** This rename only works when the `.zip` actually contains a Bedrock world
+> layout (`level.dat` + `db/`). `osm-to-bedrock` produces `.zip` archives for **Java Edition**
+> conversions (containing region files + `level.dat` + `session.lock`), which are not Bedrock
+> worlds and will not import correctly if renamed to `.mcworld`. For Bedrock output, build with
+> `--edition bedrock` (the default) and use the directory directly or the server's `.mcworld`
+> packaging.
 
 ## Python Libraries
 

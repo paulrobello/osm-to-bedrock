@@ -113,7 +113,7 @@ graph LR
 
 ```
 osm_to_bedrock/
-├── Cargo.toml           # par-osm-rust pinned to =0.1.1 (ARC-011)
+├── Cargo.toml           # par-osm-rust pinned to =0.2.1 (ARC-011)
 ├── Makefile             # build / test / lint / fmt / typecheck / checkall / web-* / docker-* / serve-stop
 ├── Dockerfile           # three-stage build (Rust + bun + node runtime)
 ├── docker-entrypoint.sh # starts Rust API + Next.js, enforces SEC-001 safe-bind
@@ -177,7 +177,7 @@ osm_to_bedrock/
 > **Stub-module caveat (ARC-011).** The seven modules marked `⚠ re-export shim` above are
 > one-line `pub use par_osm_rust::*;` files. The PBF parser, Overpass client, disk cache,
 > feature filter, elevation loader, SRTM reader, and Overture integration all live in the
-> pinned external crate `par-osm-rust = "=0.1.1"`. Edits to the in-tree stubs are no-ops;
+> pinned external crate `par-osm-rust = "=0.2.1"`. Edits to the in-tree stubs are no-ops;
 > if you need to extend those components, the work belongs in `par-osm-rust`, not here.
 
 ### Data Flow Diagram
@@ -219,7 +219,7 @@ graph TD
 
 > **Shim module (ARC-011).** `src/osm.rs` is a one-line `pub use par_osm_rust::*;` re-export.
 > `OsmData`, `OsmNode`, `OsmWay`, `OsmRelation`, `OsmPoiNode`, and the PBF parser all live
-> in the pinned external `par-osm-rust = "=0.1.1"` crate; the type and behavior descriptions
+> in the pinned external `par-osm-rust = "=0.2.1"` crate; the type and behavior descriptions
 > below are accurate but the source is upstream, not in this repo. Extension work belongs there.
 
 **Purpose:** Parse a `.osm.pbf` file into an in-memory collection of nodes and ways.
@@ -827,7 +827,7 @@ The server listens on `127.0.0.1:3002` by default (configurable via `--port` and
 ### elevation and srtm — Terrain Elevation
 
 > **Shim modules (ARC-011).** `src/elevation.rs` and `src/srtm.rs` are one-line re-exports
-> from `par-osm-rust = "=0.1.1"`. The SRTM `.hgt` loader, bilinear interpolation, and the
+> from `par-osm-rust = "=0.2.1"`. The SRTM `.hgt` loader, bilinear interpolation, and the
 > AWS Terrain Tiles auto-downloader all live upstream. Extend the upstream crate to change
 > elevation sampling behavior.
 
@@ -857,7 +857,7 @@ filters and the feature inspector to display tag values.
 
 > **Shim modules (ARC-011).** `src/overpass.rs` and `src/osm_cache.rs` are one-line
 > `pub use par_osm_rust::*;` re-exports. The Overpass QL builder, the fetcher, and the
-> SHA-256-keyed disk cache all live in the pinned external `par-osm-rust = "=0.1.1"` crate.
+> SHA-256-keyed disk cache all live in the pinned external `par-osm-rust = "=0.2.1"` crate.
 > The description below documents the behavior as seen from this crate; if you need to
 > extend it, the work belongs upstream in `par-osm-rust`.
 
@@ -874,7 +874,7 @@ and via the `--clear-cache` flag on the `serve` subcommand (which accepts an opt
 ### filter — Feature Flags
 
 > **Shim module (ARC-011).** `src/filter.rs` is a one-line re-export from
-> `par-osm-rust = "=0.1.1"`. `FeatureFilter` is defined upstream; edit there to extend it.
+> `par-osm-rust = "=0.2.1"`. `FeatureFilter` is defined upstream; edit there to extend it.
 
 **Purpose:** Enable/disable individual feature categories during conversion.
 
@@ -929,7 +929,7 @@ surface_thickness: null
 ### overture — Overture Maps Integration
 
 > **Shim module (ARC-011).** `src/overture.rs` is a thin re-export from
-> `par-osm-rust = "=0.1.1"`. The `overturemaps` CLI wrapper, GeoJSON → OsmData
+> `par-osm-rust = "=0.2.1"`. The `overturemaps` CLI wrapper, GeoJSON → OsmData
 > merge, and synthetic-negative-ID logic all live upstream.
 
 **Purpose:** Fetch building and road data from [Overture Maps](https://overturemaps.org/) via
@@ -1062,8 +1062,9 @@ graph TD
 
 ### OSM Tag Priority
 
-OSM features are processed in the following priority order in `main.rs`. The first matching
-tag wins and the way is not checked against subsequent categories:
+OSM features are processed in the following priority order in `src/pipeline/render.rs`
+(via `render_osm_features`, called once per tile). The first matching tag wins and the way
+is not checked against subsequent categories:
 
 1. **`highway`** — road/path classification
 2. **`waterway`** — linear water features
@@ -1447,6 +1448,8 @@ bun install          # Install dependencies (first time)
 bun run dev          # Dev server on http://localhost:8031
 bun run build        # Production build
 bun run lint         # ESLint
+bun run test         # Run vitest unit tests once
+bun run test:watch   # Run vitest in watch mode
 ```
 
 Or from the repo root:
@@ -1516,8 +1519,12 @@ The `convert` module includes unit tests for:
 | `lint` | Lint with warnings as errors (`cargo clippy --all-targets -- -D warnings`) |
 | `fmt` | Format code (`cargo fmt`) |
 | `typecheck` | Type checking (`cargo check`) |
-| `web-check` | Lint and build-check the Next.js frontend |
-| `checkall` | Run `fmt + lint + typecheck + test + web-check` |
+| `docs` | Build rustdoc with warnings-as-errors (`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`) |
+| `web-test` | Run web unit tests (`cd web && bun run test`, vitest) |
+| `web-check` | Lint, unit-test, and build-check the Next.js frontend |
+| `checkall` | Run `fmt + lint + typecheck + test + web-check + docs` (run before committing) |
+| `pre-commit` | Run the same checks as the git hook locally: `fmt --check + clippy + test` (no web-check) |
+| `install-hooks` | Configure git to use `.githooks/` for the `pre-commit` hook |
 | `clean` | Remove build artifacts (`cargo clean`) |
 | `install` | Install binary globally (`cargo install --path .`) |
 | `convert` | Convert a PBF file (requires `INPUT=` and `OUTPUT=` env vars) |
@@ -1534,6 +1541,20 @@ The `convert` module includes unit tests for:
 | `docker-build` | Build the Docker image (`docker build -t osm-to-bedrock .`) |
 | `docker-run` | Run the Docker container (API on 3002, web on 8031) |
 | `docker-stop` | Stop the running Docker container |
+
+### Pre-commit Hook
+
+The repository ships a shell-based git hook at `.githooks/pre-commit` (no
+`.pre-commit-config.yaml`). The hook runs `cargo fmt --check`, `cargo clippy --all-targets
+-- -D warnings`, and `cargo test --quiet`. Once installed it fires on every `git commit`.
+
+```bash
+make install-hooks   # One-time: points git at .githooks/ (pre-commit only)
+make pre-commit      # Run the same checks locally without committing
+```
+
+`make checkall` is the authoritative full gate (it adds `web-check` and `docs` on top of
+the hook's Rust-only checks); run it before pushing.
 
 ### Adding a New Block Mapping
 
@@ -1575,8 +1596,9 @@ pub fn amenity_to_block(amenity: &str) -> Block {
 }
 ```
 
-2. **Add the processing branch** in `src/main.rs` within the Pass 3 feature loop,
-   following the existing pattern of tag checks.
+2. **Add the processing branch** in `src/pipeline/render.rs` within the `render_osm_features`
+   loop, following the existing pattern of tag checks. (`src/main.rs` is now a 16-LOC binary
+   shim that delegates to `cli::main()` — see ARC-008.)
 
 3. **Test** the new mapping by running the tool on a PBF file containing the relevant features.
 

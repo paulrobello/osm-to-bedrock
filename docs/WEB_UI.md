@@ -45,7 +45,7 @@ This launches the Rust API on port `3002` and the Next.js dev server on port `80
 - Location search via Nominatim geocoding
 - Overpass API queries with bounding box selection
 - PBF file upload and parsing
-- Layer toggles for roads, buildings, water, landuse, railway, barriers, and cached areas
+- Layer toggles for roads, buildings, water, landuse, railway, barriers, cached areas, and block preview
 - Feature inspector showing OSM tags for clicked features
 - Spawn point placement
 - 3D block preview using Three.js

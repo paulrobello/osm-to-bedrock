@@ -24,8 +24,3 @@ Index of all documentation for the osm-to-bedrock project, organized by location
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | Development setup, checks, branch/commit conventions, PR process |
 | [ENHANCEMENTS.md](../ENHANCEMENTS.md) | Potential features and improvements, organized by category |
 | [LICENSE](../LICENSE) | MIT license text |
-
-## Historical
-
-Design specs and implementation plans are preserved in `docs/superpowers/` and `docs/history/`.
-These reflect the state at the time they were written and may not match the current codebase.

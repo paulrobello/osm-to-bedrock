@@ -49,7 +49,8 @@ New to osm-to-bedrock? Here are the quickest paths to a working Minecraft world:
 ### Conversion Pipeline
 - Parses `.osm.pbf` files (the standard compressed OSM format)
 - Converts geographic coordinates (lat/lon) to Minecraft block coordinates at 1:1 scale
-- Generates a Bedrock-compatible LevelDB world with roads, buildings, waterways, forests, and land use
+- Generates a Bedrock (LevelDB) or Java (Anvil) world with roads, buildings, waterways, forests, and land use
+- Streaming tile pipeline — the world is processed in fixed-size tiles (64×64 chunks) so peak memory stays bounded to one tile regardless of total map area
 - Multipolygon relation support (buildings with holes, complex land-use boundaries)
 
 ### Terrain & Elevation
@@ -359,7 +360,7 @@ Copy the output directory into your Java Edition saves folder:
 
 ## Architecture
 
-Parse → Convert coordinates → Map OSM tags to blocks → Build terrain + overlay features → Write LevelDB world.
+Parse → Convert coordinates → Map OSM tags to blocks → Build terrain + overlay features → Stream tiles to a Bedrock (LevelDB) or Java (Anvil) world.
 
 The CLI also includes an Axum HTTP server powering the Web Explorer, with Overpass and Overture data fetching, disk caching, and SRTM elevation support.
 

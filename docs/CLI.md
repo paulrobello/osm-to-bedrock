@@ -109,6 +109,8 @@ Shares most flags with `convert` (scale, sea-level, building-height, spawn, sign
 | `--overture-themes` | all | Comma-separated Overture themes to fetch |
 | `--overture-priority` | `""` | Per-theme priority, e.g. `"building=overture,transportation=osm"` |
 | `--overture-timeout` | `120` | Timeout in seconds for the Overture CLI |
+| `--poi-source` | `overture-preferred` (when `--overture` set) | POI source mode: `osm-only`, `overture-only`, `both`, or `overture-preferred` |
+| `--overture-failure` | `fallback-to-osm` (when `--overture` set) | Overture failure behaviour: `fallback-to-osm` or `fail` |
 
 **Example:**
 
@@ -150,6 +152,7 @@ Shares spawn and elevation flags with `convert`, plus:
 | `--vertical-scale` | `1.0` | Blocks per metre of elevation change |
 | `--elevation-smoothing` | `1` | Median-filter radius (0 = off) |
 | `--surface-thickness` | `4` | Terrain fill depth below surface in blocks |
+| `--edition` | `bedrock` | Output edition: `bedrock` or `java` |
 
 ## terrain-convert
 
@@ -178,6 +181,7 @@ osm-to-bedrock terrain-convert \
 | `--spawn-x` | -- | Spawn X block coordinate |
 | `--spawn-y` | -- | Spawn Y block coordinate |
 | `--spawn-z` | -- | Spawn Z block coordinate |
+| `--edition` | `bedrock` | Output edition: `bedrock` or `java` |
 
 ## serve
 
@@ -258,9 +262,9 @@ Every key in the `Config` struct (defined in `src/config.rs`). All are optional;
 | `overpass_url` | string | `OVERPASS_URL` env / built-in | fetch-convert | Override the Overpass API endpoint. |
 | `overture` | bool | `false` | fetch-convert | Also fetch and merge Overture Maps data. |
 | `overture_themes` | string | all | fetch-convert | Comma-separated Overture themes to fetch. |
-| `overture_timeout` | u64 | `120` | fetch-convert, overture-convert | Timeout in seconds for the Overture CLI. |
-| `poi_source` | string | — | fetch-convert, overture-convert | POI source policy (e.g. `osm-only`, `overture-only`, `both`). |
-| `overture_failure` | string | — | fetch-convert, overture-convert | Overture failure policy (e.g. `strict`, `fail`, `ignore`). |
+| `overture_timeout` | u64 | `120` | fetch-convert | Timeout in seconds for the Overture CLI. |
+| `poi_source` | string | `overture-preferred` | fetch-convert | POI source mode: `osm-only`, `overture-only`, `both`, or `overture-preferred`. Only consulted when `overture: true`. |
+| `overture_failure` | string | `fallback-to-osm` | fetch-convert | Overture failure behaviour: `fallback-to-osm` or `fail`. Only consulted when `overture: true`. |
 
 "convert-family" means `convert`, `fetch-convert`, `overture-convert`, and `terrain-convert` (with the noted exceptions — `terrain-convert` does not render buildings or signs).
 

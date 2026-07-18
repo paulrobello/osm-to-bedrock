@@ -80,7 +80,7 @@ The library crate (`src/lib.rs`) exposes the following public modules, grouped h
 | **Pipeline** | `params` | `ConvertParams` and `TerrainParams` structs shared by CLI and server |
 | **Pipeline** | `source_options` | POI source + Overture-failure policy enums shared across convert-family subcommands |
 | **Pipeline** | `world` | `WorldWriter` trait (`flush_tile`/`set_tile_bounds`/`save`), `Edition` enum, `ChunkData`, shared `ChunkStore` (QA-001) |
-| **Data Sources** | `osm` | **Re-export shim from `par-osm-rust` (=0.1.1).** The real PBF parser lives in the external crate; this file is one line. Extension work belongs upstream. |
+| **Data Sources** | `osm` | **Re-export shim from `par-osm-rust`.** The real PBF parser lives in the external crate (pinned version in `Cargo.toml`); this file is one line. Extension work belongs upstream. |
 | **Data Sources** | `overpass` | **Re-export shim from `par-osm-rust`.** Overpass QL builder, fetcher, and disk-cache writer are in the external crate. |
 | **Data Sources** | `osm_cache` | **Re-export shim from `par-osm-rust`.** Disk cache (~/.cache/osm-to-bedrock/overpass/), SHA-256 keys, containment lookup all live upstream. |
 | **Data Sources** | `overture` | **Thin re-export shim from `par-osm-rust`** (Overture Maps CLI integration). |
@@ -101,7 +101,7 @@ The library crate (`src/lib.rs`) exposes the following public modules, grouped h
 | **Metadata** | `metadata` | `WorldMetadata` — records conversion parameters, timing, and source info as `world_info.json` |
 | **Metadata** | `config` | YAML config file (`Config` struct) — load/merge/dump with `--config` / CWD / `~/.config` search chain |
 
-> **Module-tree caveat (ARC-011).** Seven modules — `osm`, `overpass`, `osm_cache`, `filter`, `elevation`, `srtm`, `overture` — are one-line re-export shims from the pinned external crate `par-osm-rust = "=0.1.1"`. The implementations of the PBF parser, Overpass client, disk cache, feature filter, elevation loader, SRTM reader, and Overture integration all live in that crate. Edits to the in-tree stub files are no-ops; extension work belongs in `par-osm-rust`.
+> **Module-tree caveat (ARC-011).** Seven modules — `osm`, `overpass`, `osm_cache`, `filter`, `elevation`, `srtm`, `overture` — are one-line re-export shims from the pinned external crate `par-osm-rust` (version pinned in `Cargo.toml`). The implementations of the PBF parser, Overpass client, disk cache, feature filter, elevation loader, SRTM reader, and Overture integration all live in that crate. Edits to the in-tree stub files are no-ops; extension work belongs in `par-osm-rust`.
 
 ### Layer Dependencies
 
@@ -221,7 +221,7 @@ The pipeline is **edition-agnostic at the outer tile loop**: it constructs one p
    - Allocate `ChunkData` for every chunk in the tile
    - Fill terrain layers (bedrock, stone, dirt, grass) using Rayon parallel iterators
    - Render OSM features that intersect the tile using spatially-filtered way indices
-   - `flush_tile` ships encoded SubChunks to the background `ChunkWriter` thread (Bedrock) and clears the tile's in-memory state; no-op for Java, which retains the chunks for the final region-file write
+   - `flush_tile` drains the tile: Bedrock encodes its SubChunks and ships them to the background `ChunkWriter` thread, then clears the in-memory chunk map; Java drains the tile's chunks into 32×32 region buffers and lazily writes each `.mca` once the tile containing its max in-bounds chunk has flushed (ARC-001)
 5. **Background I/O** — `ChunkWriter` owns a dedicated thread that holds the LevelDB `DB` handle. Encoded SubChunk bytes flow over a bounded channel, pipelining CPU encoding with disk writes.
 
 ```mermaid

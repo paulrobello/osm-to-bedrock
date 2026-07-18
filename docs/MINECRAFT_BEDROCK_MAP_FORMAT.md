@@ -561,7 +561,7 @@ the full Bedrock format.
 - Storage count: always `1` (no waterlogging layer)
 - Header bit 0: `0` (persistence/disk format with NBT palettes, not runtime IDs)
 - Bits-per-block: smallest valid value from `[1, 2, 3, 4, 5, 6, 8, 16]` that fits the palette
-- Palette version field: `18105860` (encodes version 1.20.64.4)
+- Palette version field: `18105860` (encodes version 1.20.70.4)
 
 **level.dat fields written:**
 
