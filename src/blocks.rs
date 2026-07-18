@@ -8,6 +8,7 @@ use std::collections::HashMap;
 #[allow(dead_code)] // enum variants reserved for future block mappings
 #[allow(clippy::enum_variant_names)] // GrassBlock intentionally mirrors Minecraft naming
 pub enum Block {
+    // === Terrain: air, subsurface, ground cover, water, trees ===
     Air = 0,
     Bedrock = 1,
     Stone = 2,
@@ -18,6 +19,8 @@ pub enum Block {
     Gravel = 7,
     OakLog = 8,
     OakLeaves = 9,
+
+    // === Building & road surface materials ===
     StoneBrick = 10,
     Concrete = 11,
     Cobblestone = 12,
@@ -37,7 +40,11 @@ pub enum Block {
     SprucePlanks = 26,
     WhiteConcrete = 27,
     StoneBrickStairs = 28,
+
+    // === Railways ===
     Rail = 29,
+
+    // === Decoration: vegetation, lighting, walls, slabs, signs ===
     TallGrass = 30,
     Fern = 31,
     Poppy = 32,
@@ -50,12 +57,16 @@ pub enum Block {
     SmoothStoneSlab = 39,
     AndesiteSlab = 40,
     CherrySign = 41,
+
+    // === Climate: snow & ice ===
     /// Full snow block — used as alpine sub-surface fill.
     Snow = 42,
     /// Thin snow layer (1/8th block) placed on top of stone at high altitude.
     SnowLayer = 43,
     /// Ice block — used for frozen water surfaces.
     Ice = 44,
+
+    // === POI decoration (placed at amenity/shop nodes) ===
     /// Hanging sign — used for address labels on buildings.
     CherryHangingSign = 45,
     /// Dispenser — used for mailbox POI decoration.
