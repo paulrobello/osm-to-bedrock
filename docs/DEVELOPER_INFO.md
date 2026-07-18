@@ -140,7 +140,7 @@ osm_to_bedrock/
 │   ├── sign.rs          # format_sign_text(), nearest-road-vector helpers
 │   ├── convert.rs       # CoordConverter, Bresenham line, scanline polygon fill
 │   ├── blocks.rs        # Block enum (56 variants), OSM tag → block mapping functions
-│   ├── world.rs         # WorldWriter trait, Edition enum, ChunkData, shared ChunkStore (QA-001), enforce_java_memory_budget (ARC-001)
+│   ├── world.rs         # WorldWriter trait, Edition enum, ChunkData, shared ChunkStore (QA-001)
 │   ├── bedrock.rs       # BedrockWorld, ChunkWriter (background LevelDB writer), SubChunk encoder
 │   ├── anvil.rs         # JavaWorld — Anvil .mca region files, gzip level.dat, session.lock
 │   ├── nbt.rs           # Minimal little-endian NBT writer (Bedrock)

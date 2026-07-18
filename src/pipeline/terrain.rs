@@ -17,7 +17,7 @@ use crate::elevation;
 use crate::osm;
 use crate::params::{ConvertParams, TerrainParams};
 use crate::spatial::{HeightMap, ResolvedRelation, SpatialIndex, TILE_CHUNKS, compute_surface_y};
-use crate::world::{self, ChunkData, Edition, MIN_Y, WorldWriter, enforce_java_memory_budget};
+use crate::world::{self, ChunkData, Edition, MIN_Y, WorldWriter};
 
 use super::render::{RenderContext, TileWays, render_osm_features};
 
@@ -615,11 +615,6 @@ pub fn run_terrain_only_to_disk(
     std::fs::create_dir_all(&params.output)
         .with_context(|| format!("creating output dir {}", params.output.display()))?;
 
-    // ARC-001: same Java in-memory guard as the OSM pipeline — the
-    // terrain-only path also uses `JavaWorld::insert_chunk` per tile and
-    // would OOM on a city-scale bbox without this check.
-    enforce_java_memory_budget(params.edition, total_chunks)?;
-
     let sea = params.sea_level;
     let snow_line = params.snow_line;
     let vertical_scale = params.vertical_scale;
@@ -723,8 +718,15 @@ pub fn run_terrain_only_to_disk(
 
         bedrock::BedrockWorld::new(&params.output).write_level_dat(spawn_x, spawn_y, spawn_z)?;
     } else {
-        // Java: accumulate in memory, then save
-        let mut world = params.edition.create_world(&params.output);
+        // Java: stream tiles to lazily-written region files (ARC-001), so a
+        // city-scale terrain bbox no longer accumulates the whole world in RAM.
+        let mut world: Box<dyn WorldWriter> = Box::new(crate::anvil::JavaWorld::new_streaming(
+            &params.output,
+            min_cx,
+            max_cx,
+            min_cz,
+            max_cz,
+        )?);
 
         let mut tcx0 = min_cx;
         while tcx0 <= max_cx {
@@ -747,6 +749,9 @@ pub fn run_terrain_only_to_disk(
                         tile_idx + 1
                     );
                 }
+
+                // Scope the streaming writer to this tile before filling it.
+                world.set_tile_bounds(tcx0, tcx1, tcz0, tcz1);
 
                 let tile_coords: Vec<(i32, i32)> = (tcx0..=tcx1)
                     .flat_map(|cx| (tcz0..=tcz1).map(move |cz| (cx, cz)))
@@ -774,6 +779,10 @@ pub fn run_terrain_only_to_disk(
                         height_map.insert(bx, bz, sy);
                     }
                 }
+
+                // Drain the tile's chunks into region buffers and seal any
+                // completed region files before the next tile.
+                world.flush_tile()?;
 
                 tile_idx += 1;
                 tcz0 += TILE_CHUNKS;

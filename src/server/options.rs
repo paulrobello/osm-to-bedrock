@@ -418,18 +418,15 @@ pub(crate) fn default_snow_line() -> i32 {
 /// safe direction for a guardrail.
 const METERS_PER_DEGREE: f64 = 111_320.0;
 
-/// Maximum block extent per axis that the in-memory conversion pipeline can
-/// handle without risking OOM or runaway rasterisation time.
+/// Maximum block extent per axis that the conversion pipeline can handle
+/// without risking runaway rasterisation time or excessive output size.
 ///
 /// 250_000 blocks per axis ≈ 15_625 chunk-columns per axis. This is a
 /// coarse abuse-guardrail that rejects obvious overreach (continent- and
 /// country-spanning bboxes, scale-bumped metro extracts) up front, before
-/// any work starts. It is layered on top of, not in lieu of, ARC-001's
-/// edition-specific Java memory guard in
-/// [`osm_to_bedrock::world::enforce_java_memory_budget`]: even when this
-/// coarse check passes, the pipeline still refuses Java conversions whose
-/// estimated chunk count exceeds the ~1.5 GB in-memory budget (Java has no
-/// streaming Anvil writer yet).
+/// any work starts. Both editions now stream tile-by-tile (Java's streaming
+/// Anvil writer landed in ARC-001), so peak memory is bounded to one tile
+/// regardless of bbox; this guard instead caps total work and on-disk size.
 ///
 /// At `scale = 1` (default): max bbox span ≈ 2.25° per axis (≈ 250 km at the
 /// equator) — permits every example bbox in `README.md` / `docs/CLI.md`

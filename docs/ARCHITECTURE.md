@@ -79,7 +79,7 @@ The library crate (`src/lib.rs`) exposes the following public modules, grouped h
 | **Pipeline** | `pipeline/` | Orchestrates the full conversion flow. `mod.rs` (streaming dispatch), `render.rs` (per-layer `render_*` helpers + `render_osm_features`), `terrain.rs` (terrain fill + `process_tile`), `preview.rs` (in-memory preview entry points), `decoration.rs` (POI/tree decoration), `util.rs` (`zip_directory`, `format_bytes`, `is_closed_way`, `coord_hash`). |
 | **Pipeline** | `params` | `ConvertParams` and `TerrainParams` structs shared by CLI and server |
 | **Pipeline** | `source_options` | POI source + Overture-failure policy enums shared across convert-family subcommands |
-| **Pipeline** | `world` | `WorldWriter` trait (`flush_tile`/`set_tile_bounds`/`save`), `Edition` enum, `ChunkData`, shared `ChunkStore` (QA-001), `enforce_java_memory_budget` guard (ARC-001) |
+| **Pipeline** | `world` | `WorldWriter` trait (`flush_tile`/`set_tile_bounds`/`save`), `Edition` enum, `ChunkData`, shared `ChunkStore` (QA-001) |
 | **Data Sources** | `osm` | **Re-export shim from `par-osm-rust` (=0.1.1).** The real PBF parser lives in the external crate; this file is one line. Extension work belongs upstream. |
 | **Data Sources** | `overpass` | **Re-export shim from `par-osm-rust`.** Overpass QL builder, fetcher, and disk-cache writer are in the external crate. |
 | **Data Sources** | `osm_cache` | **Re-export shim from `par-osm-rust`.** Disk cache (~/.cache/osm-to-bedrock/overpass/), SHA-256 keys, containment lookup all live upstream. |
@@ -92,7 +92,7 @@ The library crate (`src/lib.rs`) exposes the following public modules, grouped h
 | **Geometry** | `spatial` | `SpatialIndex` (type-bucketed + grid-indexed way lookup), `HeightMap`, `TILE_CHUNKS` constant |
 | **Geometry** | `sign` | Street-name sign formatting, nearest-road vector calculation, sign direction |
 | **World Writer** | `bedrock` | `BedrockWorld`, `ChunkWriter` — LevelDB database with SubChunk v8 encoding and `level.dat`. `new_streaming` ships encoded SubChunks to a background writer thread tile-by-tile. |
-| **World Writer** | `anvil` | `JavaWorld` — Anvil region file writer (`.mca`), Java `level.dat`, session.lock. Accumulates chunks in memory; oversized Java conversions are refused up front by `enforce_java_memory_budget` until a streaming Anvil writer lands (ARC-001). |
+| **World Writer** | `anvil` | `JavaWorld` — Anvil region file writer (`.mca`), Java `level.dat`, session.lock. Streaming mode (`new_streaming`, ARC-001) lazily writes 32×32 region files as tiles flush; in-memory `new`/`new_bounded` accumulate then write in `save` (small worlds / previews). |
 | **World Writer** | `blocks` | `Block` enum (56 variants), OSM tag-to-block mapping, `RoadStyle`, `WaterwayStyle` |
 | **World Writer** | `nbt` | Minimal little-endian NBT writer (Bedrock uses LE, not BE like Java) |
 | **World Writer** | `nbt_be` | Big-endian NBT writer for Java Edition (TAG_LIST, TAG_LONG_ARRAY, TAG_INT_ARRAY) |
@@ -209,7 +209,7 @@ For large maps, holding every chunk in memory would be prohibitive. The streamin
 The pipeline is **edition-agnostic at the outer tile loop**: it constructs one persistent `Box<dyn WorldWriter>` for the whole run, then for each tile calls `world.set_tile_bounds(...)` to scope writes, `process_tile(...)` to fill terrain + render features, and `world.flush_tile()` to drain the tile's state to the edition-specific sink.
 
 - **Bedrock** (`BedrockWorld::new_streaming`) owns a background `ChunkWriter` thread. `set_tile_bounds` scopes `set_block` writes to the tile; `flush_tile` encodes the tile's SubChunks, ships them over a bounded channel to the writer thread, and clears the in-memory chunk map. Peak memory stays bounded to one tile's worth of `ChunkData` regardless of total map size.
-- **Java** does not yet have a streaming Anvil writer. `set_tile_bounds` is a no-op, `flush_tile` is a no-op, and chunks accumulate in `JavaWorld::chunks` for the whole run. To prevent city-scale `edition=java` conversions from OOM-killing the process, the pipeline calls `world::enforce_java_memory_budget(chunk_count)` up front and refuses oversized Java conversions with a clear error (see ARC-001 in `AUDIT.md`). A streaming Anvil writer that lets Java match Bedrock's per-tile memory profile is future work.
+- **Java** streams tile-by-tile like Bedrock (ARC-001). `JavaWorld::new_streaming` scopes its scratch `ChunkStore` to the current tile via `set_tile_bounds`; `flush_tile` drains the tile's chunks into 32×32 region buffers and lazily writes each `.mca` once the tile containing its max in-bounds chunk has flushed. Peak memory is bounded to one tile plus a small frontier of region buffers, matching Bedrock's profile. (The in-memory `new`/`new_bounded` constructors still accumulate then write in `save` — used only by the preview path and library consumers.)
 
 **How it works:**
 

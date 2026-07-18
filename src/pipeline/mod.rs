@@ -37,16 +37,11 @@
 //! [`render::render_osm_features`] to avoid code duplication.  The
 //! streaming path is edition-agnostic at the outer tile loop: each tile is
 //! processed through a [`WorldWriter`] that exposes
-//! [`WorldWriter::flush_tile`] to drain the current tile's state. Bedrock's
-//! streaming backend overrides `flush_tile` to ship encoded SubChunks to a
-//! background LevelDB writer thread and clear the in-memory chunk map, so
-//! peak memory stays bounded to one tile. Java's backend leaves
-//! `flush_tile` as a no-op and accumulates the entire world in memory; to
-//! prevent city-scale `edition=java` conversions from OOM-killing the
-//! process, the pipeline calls [`world::enforce_java_memory_budget`] before
-//! allocating the world and refuses oversized Java conversions with a clear
-//! error (see ARC-001 in `AUDIT.md`). A streaming Anvil writer that lets
-//! Java match Bedrock's per-tile memory profile is future work.
+//! [`WorldWriter::flush_tile`] to drain the current tile's state. Both
+//! backends override `flush_tile` to bound peak memory to one tile — Bedrock
+//! ships encoded SubChunks to a background LevelDB writer thread, and Java
+//! (ARC-001) drains the tile's chunks into 32×32 region buffers and lazily
+//! writes each `.mca` once its completing tile has flushed.
 //!
 //! ## Module layout
 //!
@@ -70,7 +65,7 @@ use crate::bedrock;
 use crate::osm;
 use crate::params::ConvertParams;
 use crate::spatial::{HeightMap, SpatialIndex, TILE_CHUNKS};
-use crate::world::{Edition, WorldWriter, enforce_java_memory_budget};
+use crate::world::{Edition, WorldWriter};
 
 mod decoration;
 mod preview;
@@ -249,15 +244,10 @@ pub(crate) fn run_pipeline_streaming(
         max_cz
     );
 
-    // ARC-001: refuse oversized Java conversions as early as possible
-    // (right after the chunk bounds are known, before the slow height
-    // map precompute). The Java backend accumulates the entire world in
-    // memory; a city-scale `edition=java` pull would OOM the process.
-    // Bedrock streams tile-by-tile and is never subject to the guard.
-    // See [`world::enforce_java_memory_budget`] for the math.
-    let total_chunks_estimate =
-        ((max_cx - min_cx + 1) as u64).saturating_mul((max_cz - min_cz + 1) as u64);
-    enforce_java_memory_budget(params.edition, total_chunks_estimate)?;
+    // Both backends now stream tile-by-tile (Bedrock to LevelDB, Java to
+    // lazily-written region files — ARC-001), so the world chunk rectangle no
+    // longer needs an up-front memory guard. Peak RAM is bounded to one tile's
+    // worth of ChunkData plus a small frontier of region buffers.
 
     // Pass 2: pre-compute global HeightMap (parallel, no ChunkData)
     progress_cb(0.20, "Computing height map");
@@ -333,10 +323,10 @@ pub(crate) fn run_pipeline_streaming(
     std::fs::create_dir_all(&params.output)
         .with_context(|| format!("creating output dir {}", params.output.display()))?;
 
-    // Construct the persistent writer for the whole pipeline. Both
-    // editions expose the same `WorldWriter` seam: Bedrock's streaming
-    // backend owns a background LevelDB writer; Java's backend
-    // accumulates chunks in memory.
+    // Construct the persistent writer for the whole pipeline. Both editions
+    // stream tile-by-tile through the same `WorldWriter` seam: Bedrock's
+    // streaming backend owns a background LevelDB writer; Java's streaming
+    // backend (ARC-001) lazily writes 32×32 region files as tiles flush.
     let mut world: Box<dyn WorldWriter> = match params.edition {
         Edition::Bedrock => {
             let db_path = params.output.join("db");
@@ -346,7 +336,13 @@ pub(crate) fn run_pipeline_streaming(
                 db_path,
             )?)
         }
-        Edition::Java => params.edition.create_world(&params.output),
+        Edition::Java => Box::new(crate::anvil::JavaWorld::new_streaming(
+            &params.output,
+            min_cx,
+            max_cx,
+            min_cz,
+            max_cz,
+        )?),
     };
 
     progress_cb(0.35, "Converting in tiles");

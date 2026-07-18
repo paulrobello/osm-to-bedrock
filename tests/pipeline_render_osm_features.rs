@@ -36,7 +36,7 @@ use osm_to_bedrock::osm::{OsmData, OsmNode, OsmWay};
 use osm_to_bedrock::params::ConvertParams;
 use osm_to_bedrock::pipeline::{self, RenderContext, TileWays, render_osm_features};
 use osm_to_bedrock::spatial::{HeightMap, SpatialIndex};
-use osm_to_bedrock::world::{ChunkData, Edition, WorldWriter, enforce_java_memory_budget};
+use osm_to_bedrock::world::{ChunkData, Edition, WorldWriter};
 
 // ── RecordingWorld ────────────────────────────────────────────────────────────
 
@@ -790,9 +790,9 @@ fn bedrock_streaming_pipeline_writes_leveldb_subchunks_via_flush_tile() {
 
 #[test]
 fn java_streaming_pipeline_writes_region_files_and_level_dat() {
-    // Same end-to-end check for the Java path: confirms the unified loop
-    // drives Java's accumulate-then-save flow correctly through the
-    // edition-agnostic outer loop.
+    // End-to-end check for the Java path (ARC-001): the pipeline now drives a
+    // streaming Anvil writer — `JavaWorld::new_streaming` — that lazily writes
+    // region files as tiles flush rather than accumulating the whole world.
     let dir = tempfile::tempdir().expect("tempdir");
     let data = synthetic_osm_data();
     let mut params = default_params(Edition::Java);
@@ -815,58 +815,6 @@ fn java_streaming_pipeline_writes_region_files_and_level_dat() {
         mca_count > 0,
         "at least one .mca region file must be written",
     );
-}
-
-// ── ARC-001: Java in-memory OOM guard ──────────────────────────────────────
-//
-// The streaming pipeline calls `enforce_java_memory_budget` after
-// computing terrain bounds, BEFORE allocating the world. These tests
-// pin the deterministic-refusal behaviour that closes the OOM vector.
-
-#[test]
-fn arc001_run_conversion_from_data_refuses_oversized_java_with_clear_message() {
-    // Build synthetic data whose bounds × scale would exceed the Java
-    // memory budget. The pipeline must return an Err mentioning Java
-    // and suggesting Bedrock, without allocating the world.
-    //
-    // The budget threshold is ~15_360 chunks (1.5 GB / 100 KB). The
-    // synthetic OSM span (~2.3e-4 deg lat × ~9e-5 deg lon) at scale=0.005
-    // m/block becomes ~5_120 × ~2_002 blocks ≈ 320 × 126 ≈ 40_320 chunks,
-    // well over the budget. (`scale` is metres-per-block, so LOWER scale
-    // means MORE blocks per degree.)
-    let dir = tempfile::tempdir().expect("tempdir");
-    let data = synthetic_osm_data();
-    let mut params = default_params(Edition::Java);
-    params.output = dir.path().to_path_buf();
-    params.scale = 0.005;
-
-    let err = pipeline::run_conversion_from_data(data, &params, &|_, _| {})
-        .expect_err("oversized Java conversion must be refused");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("Java Edition"),
-        "error must name Java Edition: {msg}",
-    );
-    assert!(
-        msg.contains("Bedrock") || msg.contains("bounding box"),
-        "error must suggest a remedy: {msg}",
-    );
-
-    // The world must never have been allocated: db/region dirs absent.
-    assert!(
-        !dir.path().join("db").exists() && !dir.path().join("region").exists(),
-        "guard must refuse before any world allocation",
-    );
-}
-
-#[test]
-fn arc001_enforce_java_memory_budget_unit_thresholds() {
-    // Direct unit test of the public guard function. Mirrors the
-    // in-crate tests but at the integration boundary to lock the
-    // public API.
-    assert!(enforce_java_memory_budget(Edition::Bedrock, u64::MAX).is_ok());
-    assert!(enforce_java_memory_budget(Edition::Java, 1).is_ok());
-    assert!(enforce_java_memory_budget(Edition::Java, 100_000).is_err());
 }
 
 fn is_building_block(b: &Block) -> bool {
