@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt typecheck checkall web-check clean install web-dev web-build web-install web-kill kill stop serve-stop web-stop docker-build docker-run docker-stop pre-commit install-hooks
+.PHONY: build test lint fmt typecheck checkall web-check web-test clean install web-dev web-build web-install web-kill kill stop serve-stop web-stop docker-build docker-run docker-stop pre-commit install-hooks
 
 build:
 	cargo build --release
@@ -15,8 +15,11 @@ fmt:
 typecheck:
 	cargo check
 
-web-check: ## Lint and build-check the Next.js frontend
-	cd web && bun run lint && bun run build
+web-test: ## Run web unit tests (vitest)
+	cd web && bun run test
+
+web-check: ## Lint, unit-test, and build-check the Next.js frontend
+	cd web && bun run lint && bun run test && bun run build
 
 checkall: fmt lint typecheck test web-check
 
