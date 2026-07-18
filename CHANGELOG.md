@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `docs/DEPLOYMENT.md` — Docker, reverse-proxy, and self-hosting guide (ports, environment variables, and the auth requirement that applies to non-loopback binds).
+
+### Removed
+- Stale graphify git hooks (`.githooks/post-commit`, `.githooks/post-checkout`) — graphify integration was removed from settings/gitignore/CLAUDE.md in 0.8.0 but the local hook files were left behind, silently re-enabling the integration when `make install-hooks` was run. The `pre-commit` hook (fmt + clippy + test) is unaffected and remains the only hook `install-hooks` configures.
+
+---
+
 ## [0.8.0] — 2026-05-12
 
 ### Added
@@ -28,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `geometry.rs` draw functions accept `&mut dyn WorldWriter`
 - `edition` field added to `ConvertParams` and `TerrainParams`
 - Server produces `.zip` for Java editions, `.mcworld` for Bedrock
+
+---
 
 ## [0.7.0] — 2026-05-07
 
@@ -148,7 +158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Roads, buildings, water bodies, waterways, forests, land use areas
 - `level.dat` with creative mode, commands enabled, correct spawn point
 
-[Unreleased]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.4.0...v0.5.0

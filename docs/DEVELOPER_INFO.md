@@ -113,39 +113,72 @@ graph LR
 
 ```
 osm_to_bedrock/
-├── Cargo.toml
-├── Makefile
+├── Cargo.toml           # par-osm-rust pinned to =0.1.1 (ARC-011)
+├── Makefile             # build / test / lint / fmt / typecheck / checkall / web-* / docker-* / serve-stop
+├── Dockerfile           # three-stage build (Rust + bun + node runtime)
+├── docker-entrypoint.sh # starts Rust API + Next.js, enforces SEC-001 safe-bind
 ├── src/
-│   ├── main.rs           # CLI entry point (clap subcommands), wires pipeline
-│   ├── config.rs         # YAML config file loading, merging, and dumping
-│   ├── params.rs         # ConvertParams, TerrainParams — shared parameter structs
-│   ├── pipeline.rs       # run_conversion(), run_terrain_only_to_disk() entry points
-│   ├── geometry.rs       # draw_road, draw_building, draw_waterway, draw_bridge, draw_tunnel
-│   ├── spatial.rs        # SpatialIndex, HeightMap
-│   ├── sign.rs           # format_sign_text(), nearest-road-vector helpers
-│   ├── osm.rs            # PBF parser — nodes, ways, bounding box
-│   ├── convert.rs        # CoordConverter, Bresenham line, scanline polygon fill
-│   ├── blocks.rs         # Block enum, OSM tag → block mapping functions
-│   ├── bedrock.rs        # ChunkData, BedrockWorld, LevelDB writer, SubChunk encoder
-│   ├── nbt.rs            # Minimal little-endian NBT writer
-│   ├── server.rs         # Axum HTTP API — multipart upload, conversion jobs, download
-│   ├── elevation.rs      # Elevation sampling interface (SRTM + fallback)
-│   ├── srtm.rs           # SRTM HGT file reader and bilinear interpolation
+│   ├── main.rs          # 16-LOC binary shim → cli::main() (ARC-008)
+│   ├── lib.rs           # Library crate root — declares all public modules
+│   ├── config.rs        # YAML config file loading, merging, and dumping
+│   ├── params.rs        # ConvertParams, TerrainParams — shared parameter structs
+│   ├── source_options.rs # POI source + Overture-failure policy enums (shared by convert-family subcommands)
+│   ├── cli/             # clap CLI (ARC-008): Cli, Commands enum, shared flag groups
+│   │   ├── mod.rs       # cli::main() dispatch
+│   │   ├── args.rs      # Cli, Commands, ConvertCommonArgs, BuildingArgs
+│   │   ├── convert.rs   # convert / fetch-convert / overture-convert shared run helpers
+│   │   └── cache.rs     # cache subcommand
+│   ├── pipeline/        # Conversion pipeline (ARC-003 split)
+│   │   ├── mod.rs       # streaming dispatch: run_conversion, run_conversion_from_data, run_pipeline_streaming
+│   │   ├── render.rs    # per-layer render_* helpers + render_osm_features (QA-006)
+│   │   ├── terrain.rs   # terrain fill, geometry helpers, process_tile, terrain-only entry points
+│   │   ├── preview.rs   # in-memory preview entry points
+│   │   ├── decoration.rs # POI / tree decoration helpers (pub(super))
+│   │   └── util.rs      # zip_directory, format_bytes, is_closed_way, coord_hash
+│   ├── geometry.rs      # draw_road, draw_building, draw_waterway, draw_bridge, draw_tunnel
+│   ├── spatial.rs       # SpatialIndex, HeightMap, TILE_CHUNKS
+│   ├── sign.rs          # format_sign_text(), nearest-road-vector helpers
+│   ├── convert.rs       # CoordConverter, Bresenham line, scanline polygon fill
+│   ├── blocks.rs        # Block enum (56 variants), OSM tag → block mapping functions
+│   ├── world.rs         # WorldWriter trait, Edition enum, ChunkData, shared ChunkStore (QA-001), enforce_java_memory_budget (ARC-001)
+│   ├── bedrock.rs       # BedrockWorld, ChunkWriter (background LevelDB writer), SubChunk encoder
+│   ├── anvil.rs         # JavaWorld — Anvil .mca region files, gzip level.dat, session.lock
+│   ├── nbt.rs           # Minimal little-endian NBT writer (Bedrock)
+│   ├── nbt_be.rs        # Big-endian NBT writer (Java: TAG_LIST, TAG_LONG_ARRAY, TAG_INT_ARRAY)
+│   ├── server/          # Axum HTTP API (ARC-004 split)
+│   │   ├── mod.rs       # build_router_with_state, run, CORS, body limits
+│   │   ├── state.rs     # Jobs / AppState / JobState, lock_jobs (QA-003/SEC-006), sanitize_world_name, eviction
+│   │   ├── error.rs     # ApiError — generic 500, explicit 400 (SEC-002/SEC-008)
+│   │   ├── auth.rs      # opt-in shared-secret API key middleware (SEC-001), enforce_safe_bind
+│   │   ├── options.rs   # request/response structs, serde defaults, validate_bbox (SEC-004), JSON body limits (SEC-005)
+│   │   └── handlers.rs  # HTTP handlers + spawn_conversion_job helper (QA-004)
 │   ├── geojson_export.rs # OsmData → GeoJSON FeatureCollection for the web frontend
-│   ├── overpass.rs       # Overpass API client and query builder
-│   ├── osm_cache.rs      # Disk-backed Overpass response cache (SHA-256 keyed)
-│   ├── overture.rs       # Overture Maps CLI integration — fetch GeoJSON and merge into OsmData
-│   ├── metadata.rs       # WorldMetadata — writes world_info.json after conversion
-│   ├── lib.rs            # Library crate root — re-exports public API for use as a dependency
-│   └── filter.rs         # Feature-type enable/disable flags (roads, buildings, etc.)
-├── web/                  # Next.js Web Explorer (see Web Frontend Architecture below)
+│   ├── metadata.rs      # WorldMetadata — writes world_info.json after conversion
+│   ├── osm.rs           # ⚠ re-export shim from par-osm-rust (parser lives upstream)
+│   ├── overpass.rs      # ⚠ re-export shim from par-osm-rust (Overpass client/cache writer upstream)
+│   ├── osm_cache.rs     # ⚠ re-export shim from par-osm-rust (disk cache upstream)
+│   ├── filter.rs        # ⚠ re-export shim from par-osm-rust (FeatureFilter defined upstream)
+│   ├── elevation.rs     # ⚠ re-export shim from par-osm-rust (SRTM loader upstream)
+│   ├── srtm.rs          # ⚠ re-export shim from par-osm-rust (HGT parser upstream)
+│   └── overture.rs      # ⚠ re-export shim from par-osm-rust (Overture CLI integration upstream)
+├── web/                 # Next.js Web Explorer (see Web Frontend Architecture below)
 └── docs/
     ├── README.md
+    ├── ARCHITECTURE.md
+    ├── CLI.md
     ├── DEVELOPER_INFO.md
+    ├── DEPLOYMENT.md
     ├── DOCUMENTATION_STYLE_GUIDE.md
+    ├── WEB_UI.md
     ├── MINECRAFT_BEDROCK_MAP_FORMAT.md
     └── MINECRAFT_BEDROCK_TOOLS_AND_IMPORT.md
 ```
+
+> **Stub-module caveat (ARC-011).** The seven modules marked `⚠ re-export shim` above are
+> one-line `pub use par_osm_rust::*;` files. The PBF parser, Overpass client, disk cache,
+> feature filter, elevation loader, SRTM reader, and Overture integration all live in the
+> pinned external crate `par-osm-rust = "=0.1.1"`. Edits to the in-tree stubs are no-ops;
+> if you need to extend those components, the work belongs in `par-osm-rust`, not here.
 
 ### Data Flow Diagram
 
@@ -183,6 +216,11 @@ graph TD
 ## Module Documentation
 
 ### osm — OpenStreetMap Parser
+
+> **Shim module (ARC-011).** `src/osm.rs` is a one-line `pub use par_osm_rust::*;` re-export.
+> `OsmData`, `OsmNode`, `OsmWay`, `OsmRelation`, `OsmPoiNode`, and the PBF parser all live
+> in the pinned external `par-osm-rust = "=0.1.1"` crate; the type and behavior descriptions
+> below are accurate but the source is upstream, not in this repo. Extension work belongs there.
 
 **Purpose:** Parse a `.osm.pbf` file into an in-memory collection of nodes and ways.
 
@@ -505,10 +543,16 @@ See [Block Mapping Reference](#block-mapping-reference) for the full tag-to-bloc
 
 ### bedrock — Bedrock Format Writer
 
-**Purpose:** Accumulate block placements in memory, then serialise them into Bedrock Edition's
-LevelDB format.
+> **Shared types (QA-001).** `ChunkData` and the shared storage fields live in `src/world.rs`
+> as the `ChunkStore` struct, not in `bedrock.rs`. Both `BedrockWorld` and `JavaWorld` embed
+> a `ChunkStore` and delegate the edition-agnostic `WorldWriter` methods to it. Bedrock's
+> own state is just the `ChunkStore` + output path + the background `ChunkWriter` thread
+> handle; Java's is `ChunkStore` + output path.
 
-#### ChunkData
+**Purpose:** Implement the Bedrock Edition `WorldWriter` backend that serialises block
+placements into a LevelDB database with SubChunk v8 encoding and a `level.dat` header.
+
+#### ChunkData (defined in `src/world.rs`)
 
 ```rust
 /// In-memory representation of one 16x(height)x16 chunk column.
@@ -529,26 +573,19 @@ impl ChunkData {
 #### BedrockWorld
 
 ```rust
-/// Accumulates chunk data in memory, then writes a Bedrock world to disk.
+/// Bedrock Edition WorldWriter backend. In streaming mode (`new_streaming`),
+/// owns a background ChunkWriter thread that drains encoded SubChunks to LevelDB
+/// tile-by-tile, keeping peak memory bounded to one tile's worth of ChunkData.
 pub struct BedrockWorld {
-    chunks: HashMap<(i32, i32), ChunkData>,
+    store: ChunkStore,            // shared storage (QA-001)
     output: PathBuf,
-    /// Block entity NBT blobs, keyed by chunk coordinates.
-    block_entities: HashMap<(i32, i32), Vec<Vec<u8>>>,
-    /// Sign direction overrides, keyed by (x, y, z) world coordinates.
-    sign_directions: HashMap<(i32, i32, i32), i32>,
-    /// Direction overrides for directional blocks (stairs, rails).
-    block_directions: HashMap<(i32, i32, i32), i32>,
-    /// Optional spatial bounds for incremental tile processing.
-    chunk_bounds: Option<(i32, i32, i32, i32)>,
+    // + ChunkWriter handle when constructed via new_streaming
 }
 
 impl BedrockWorld {
     pub fn new(output: &Path) -> Self;
-
-    /// Create a world bounded to a chunk-coordinate rectangle.
-    /// Blocks outside the bounds are silently ignored.
     pub fn new_bounded(output: &Path, min_cx: i32, max_cx: i32, min_cz: i32, max_cz: i32) -> Self;
+    pub fn new_streaming(output: PathBuf, db_path: PathBuf) -> Result<Self>;
 
     /// Set a block at absolute (x, y, z) world coordinates.
     pub fn set_block(&mut self, x: i32, y: i32, z: i32, block: Block);
@@ -560,7 +597,7 @@ impl BedrockWorld {
     pub fn chunk_count(&self) -> usize;
 
     /// Write the world to disk (LevelDB database + level.dat).
-    pub fn save(&self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()>;
+    pub fn save(&mut self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()>;
 }
 ```
 
@@ -607,7 +644,13 @@ pub fn write_byte_tag(w: &mut impl Write, name: &str, value: i8) -> Result<()>;
 
 ### main — CLI and Orchestration
 
-**Purpose:** Parse command-line arguments and drive the three-pass conversion pipeline.
+> **Refactor (ARC-008).** `src/main.rs` is now a 16-LOC binary shim that delegates to
+> `cli::main()`. The CLI itself lives in `src/cli/{mod,args,convert,cache}.rs`:
+> `Cli`, the `Commands` enum, the shared flag groups `ConvertCommonArgs` + `BuildingArgs`,
+> and the per-subcommand `run_*` helpers. The three-pass build loop moved to
+> `src/pipeline/` (ARC-003) — see `run_pipeline_streaming` in `pipeline/mod.rs`.
+
+**Purpose:** Parse command-line arguments and drive the streaming tile conversion pipeline.
 
 #### CLI Subcommands
 
@@ -750,6 +793,12 @@ The main function processes OSM data in three passes:
 
 ### server — HTTP API Server
 
+> **Module layout (ARC-004).** `src/server.rs` was split into a directory:
+> `mod.rs` (router + `run`), `state.rs` (`Jobs`/`AppState`/`JobState`, `lock_jobs`,
+> `sanitize_world_name`, eviction), `error.rs` (`ApiError`), `auth.rs` (opt-in API key
+> middleware + `enforce_safe_bind` startup guard), `options.rs` (request/response structs +
+> serde defaults + `validate_bbox`), `handlers.rs` (HTTP handlers + `spawn_conversion_job`).
+
 **Purpose:** Axum-based HTTP server that exposes the conversion pipeline over a REST API for the
 web frontend and external clients.
 
@@ -777,6 +826,11 @@ The server listens on `127.0.0.1:3002` by default (configurable via `--port` and
 
 ### elevation and srtm — Terrain Elevation
 
+> **Shim modules (ARC-011).** `src/elevation.rs` and `src/srtm.rs` are one-line re-exports
+> from `par-osm-rust = "=0.1.1"`. The SRTM `.hgt` loader, bilinear interpolation, and the
+> AWS Terrain Tiles auto-downloader all live upstream. Extend the upstream crate to change
+> elevation sampling behavior.
+
 **Purpose:** Provide real-world elevation data for terrain generation.
 
 `elevation.rs` loads SRTM `.hgt` files via memory-mapped I/O (`memmap2`) and provides bilinear
@@ -801,6 +855,12 @@ filters and the feature inspector to display tag values.
 
 ### overpass and osm\_cache — Overpass Client and Cache
 
+> **Shim modules (ARC-011).** `src/overpass.rs` and `src/osm_cache.rs` are one-line
+> `pub use par_osm_rust::*;` re-exports. The Overpass QL builder, the fetcher, and the
+> SHA-256-keyed disk cache all live in the pinned external `par-osm-rust = "=0.1.1"` crate.
+> The description below documents the behavior as seen from this crate; if you need to
+> extend it, the work belongs upstream in `par-osm-rust`.
+
 **Purpose:** Fetch OSM data by bounding box without requiring a pre-downloaded PBF file.
 
 `overpass.rs` builds and executes Overpass QL queries against `https://overpass-api.de/api/interpreter`.
@@ -812,6 +872,9 @@ and via the `--clear-cache` flag on the `serve` subcommand (which accepts an opt
 ---
 
 ### filter — Feature Flags
+
+> **Shim module (ARC-011).** `src/filter.rs` is a one-line re-export from
+> `par-osm-rust = "=0.1.1"`. `FeatureFilter` is defined upstream; edit there to extend it.
 
 **Purpose:** Enable/disable individual feature categories during conversion.
 
@@ -864,6 +927,10 @@ surface_thickness: null
 ---
 
 ### overture — Overture Maps Integration
+
+> **Shim module (ARC-011).** `src/overture.rs` is a thin re-export from
+> `par-osm-rust = "=0.1.1"`. The `overturemaps` CLI wrapper, GeoJSON → OsmData
+> merge, and synthetic-negative-ID logic all live upstream.
 
 **Purpose:** Fetch building and road data from [Overture Maps](https://overturemaps.org/) via
 the `overturemaps` Python CLI and merge it into the `OsmData` structure used by the rest of

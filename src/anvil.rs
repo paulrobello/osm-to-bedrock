@@ -36,6 +36,11 @@ pub struct JavaWorld {
 }
 
 impl JavaWorld {
+    /// Create an unbounded `JavaWorld` that accepts block writes in any chunk.
+    ///
+    /// Accumulates chunks in memory; call [`JavaWorld::save`] (via the
+    /// [`WorldWriter`] trait) at the end of the pipeline to write the Anvil
+    /// region files, `level.dat`, and `session.lock`.
     pub fn new(output: &Path) -> Self {
         Self {
             store: ChunkStore::new(),
@@ -43,6 +48,10 @@ impl JavaWorld {
         }
     }
 
+    /// Create a `JavaWorld` bounded to the chunk rectangle
+    /// `[min_cx, max_cx] × [min_cz, max_cz]`. Writes outside the rectangle are
+    /// silently dropped. Java's `set_tile_bounds` is a no-op at the trait
+    /// level, so this constructor is the only way to scope Java writes.
     pub fn new_bounded(output: &Path, min_cx: i32, max_cx: i32, min_cz: i32, max_cz: i32) -> Self {
         Self {
             store: ChunkStore::new_bounded(min_cx, max_cx, min_cz, max_cz),

@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Version](https://img.shields.io/badge/version-0.8.0-blue)
 
-Convert [OpenStreetMap](https://www.openstreetmap.org/) data into playable **Minecraft Bedrock or Java Edition** worlds. Roads, buildings, waterways, forests, and land-use areas are all mapped to appropriate Minecraft blocks at 1:1 scale (one block = one metre, configurable). Includes a browser-based Web Explorer for selecting areas on a live map and exporting directly to `.mcworld` (Bedrock) or `.zip` (Java) files.
+Convert [OpenStreetMap](https://www.openstreetmap.org/) data into playable **Minecraft Bedrock or Java Edition** worlds. Roads, buildings, waterways, forests, and land-use areas are all mapped to appropriate Minecraft blocks at 1:1 scale (one block = one metre, configurable). Includes a browser-based Web Explorer for selecting areas on a live map and exporting directly to `.mcworld` (Bedrock) files. Java Edition is currently supported via the CLI only.
 
 ![Web Explorer Map View](https://raw.githubusercontent.com/paulrobello/osm-to-bedrock/main/screenshots/screenshot-map.png)
 
@@ -23,6 +23,7 @@ Convert [OpenStreetMap](https://www.openstreetmap.org/) data into playable **Min
 - [Configuration](#configuration)
 - [Subcommands](#subcommands)
 - [Web Explorer](#web-explorer)
+- [Docker / Self-hosting](#docker--self-hosting)
 - [Documentation](#documentation)
 - [Getting OSM Data](#getting-osm-data)
 - [Adding the World to Minecraft](#adding-the-world-to-minecraft)
@@ -97,12 +98,14 @@ mv osm-to-bedrock-linux-x86_64 ~/.local/bin/osm-to-bedrock
 
 ### Cargo Install
 
-```bash
-# Install from crates.io
-cargo install osm_to_bedrock
+> **Note:** The crate is **not yet published to crates.io** — `cargo install osm_to_bedrock` will fail with "could not find `osm_to_bedrock`". Publishing is pending (see [issue tracker](https://github.com/paulrobello/osm-to-bedrock/issues)). Until then, install from a local checkout:
 
-# Or install from local source
+```bash
+# Clone and install from source (the supported path today)
+git clone https://github.com/paulrobello/osm-to-bedrock
+cd osm-to-bedrock
 cargo install --path .
+# Or equivalently: make install
 ```
 
 ### From Source
@@ -269,7 +272,7 @@ open http://localhost:8031
 - Configurable conversion parameters (scale, elevation, smoothing, building height, etc.)
 - Overture Maps data integration toggle
 - Conversion with real-time progress tracking
-- Direct `.mcworld` (Bedrock) or `.zip` (Java) download
+- Direct `.mcworld` (Bedrock) download — Java Edition output is CLI-only for now (no edition selector in the Web UI yet)
 
 **Configuration:**
 
@@ -282,6 +285,38 @@ RUST_API_URL=http://localhost:3002
 ```
 
 See `web/.env.local.example` for a complete template.
+
+## Docker / Self-hosting
+
+A three-stage `Dockerfile` (Rust build → Next.js build → slim Node runtime) and a `docker-entrypoint.sh` ship in the repo root.
+
+```bash
+make docker-build     # docker build -t osm-to-bedrock .
+make docker-run       # docker run -p 3002:3002 -p 8031:8031 ...
+make docker-stop      # docker stop osm-to-bedrock
+```
+
+The entrypoint binds the Rust API to `0.0.0.0`, so the binary refuses to start without an API key (or `OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1`). Inject the key at runtime — never bake it into the image:
+
+```bash
+docker run --rm \
+  -p 3002:3002 -p 8031:8031 \
+  -e OSM_TO_BEDROCK_API_KEY="$(openssl rand -hex 32)" \
+  -e CORS_ALLOWED_ORIGIN="https://maps.example.com" \
+  --name osm-to-bedrock osm-to-bedrock
+```
+
+Key environment variables:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OSM_TO_BEDROCK_API_KEY` | unset | Shared-secret API key. Required for non-loopback binds. Clients send it in `Authorization: Bearer <key>` or `X-API-Key`. |
+| `OSM_TO_BEDROCK_ALLOW_INSECURE_BIND` | unset | Set to `1` to accept the risk of an unauthenticated non-loopback bind. Avoid in production. |
+| `CORS_ALLOWED_ORIGIN` | `http://localhost:8031` | Origin allowed by the API's CORS layer. Set to the Web Explorer's public origin for remote deploys. |
+| `RUST_API_URL` | `http://localhost:3002` | Server-side base URL the Next.js proxy routes use to reach the Rust API. Not browser-exposed. |
+| `API_PORT` / `PORT` | `3002` / `8031` | Container-internal ports for the API and Next.js. |
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full self-hosting guide, reverse-proxy setup, and auth requirements.
 
 ## Documentation
 
@@ -343,20 +378,31 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for the full d
 Before submitting a pull request:
 
 ```bash
-make build      # Release build
-make test       # Run unit tests
-make lint       # cargo clippy
-make fmt        # rustfmt
-make typecheck  # cargo check
-make web-check  # Lint and build-check the Next.js frontend
-make checkall   # fmt + lint + typecheck + test + web-check
-make clean      # cargo clean
-make install    # cargo install --path .
-make dev        # Start both Rust API + Web Explorer
-make serve      # Start Rust API server only
-make stop       # Gracefully stop both dev servers
-make kill       # Force-kill both dev servers
+make build        # Release build
+make test         # Run Rust unit tests
+make lint         # cargo clippy
+make fmt          # rustfmt
+make typecheck    # cargo check
+make web-test     # Run web unit tests (vitest)
+make web-check    # Lint + unit-test + build-check the Next.js frontend
+make checkall     # fmt + lint + typecheck + test + web-check (run before committing)
+make clean        # cargo clean
+make install      # cargo install --path .
+make dev          # Start both Rust API (3002) + Web Explorer (8031)
+make serve        # Start Rust API server only
+make serve-stop   # Gracefully stop the Rust API server
+make stop         # Gracefully stop both dev servers
+make web-stop     # Gracefully stop the Next.js dev server
+make kill         # Force-kill both dev servers
+make web-kill     # Force-kill the Next.js dev server
+make docker-build # Build the Docker image
+make docker-run   # Run the Docker container (API on 3002, web on 8031)
+make docker-stop  # Stop the running Docker container
+make install-hooks # Configure git to use .githooks/ for pre-commit
+make pre-commit   # fmt --check + clippy + test (no web-check)
 ```
+
+See the `Makefile` for the canonical list of targets.
 
 ## License
 

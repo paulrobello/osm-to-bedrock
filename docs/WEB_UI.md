@@ -30,6 +30,8 @@ The Web Explorer is a Next.js frontend for browsing OpenStreetMap data on an int
 
 The Web Explorer runs as a Next.js application on port `8031` alongside the Rust API server on port `3002`. Together they provide a browser-based workflow for selecting real-world areas, fetching OSM data, previewing features on a map, and converting them into Minecraft worlds.
 
+> **Edition support.** The Web Explorer currently produces **Bedrock `.mcworld`** downloads only — the conversion form has no `edition` selector, so the Rust server always defaults to Bedrock. Java Edition (`.zip`) output is available via the CLI (`--edition java`) for now; a Web UI selector is tracked as future work.
+
 **Starting both servers:**
 
 ```bash

@@ -9,53 +9,95 @@ use std::collections::HashMap;
 #[allow(clippy::enum_variant_names)] // GrassBlock intentionally mirrors Minecraft naming
 pub enum Block {
     // === Terrain: air, subsurface, ground cover, water, trees ===
+    /// Empty cell — the default block state.
     Air = 0,
+    /// Bottommost layer of every chunk column.
     Bedrock = 1,
+    /// Sub-surface fill below the dirt layer.
     Stone = 2,
+    /// Layer between stone and the surface grass block.
     Dirt = 3,
+    /// Default surface block for grassland/park land use.
     GrassBlock = 4,
+    /// Water bodies (lakes, rivers, reservoirs, oceans).
     Water = 5,
+    /// Beaches, deserts, sand land use.
     Sand = 6,
+    /// Gravel surface (rare).
     Gravel = 7,
+    /// Tree trunk for oak/birch forests and `landuse=forest`.
     OakLog = 8,
+    /// Canopy block placed above oak logs.
     OakLeaves = 9,
 
     // === Building & road surface materials ===
+    /// Building wall material.
     StoneBrick = 10,
+    /// Light-gray concrete — generic building wall.
     Concrete = 11,
+    /// Cobblestone road surface (older road class).
     Cobblestone = 12,
+    /// Black concrete — asphalt-style road surface.
     BlackConcrete = 13,
+    /// Gray concrete — road surface accent.
     GrayConcrete = 14,
+    /// Stone slab — road surface / step block.
     StoneSlab = 15,
+    /// Yellow concrete — road center-line / edge-line marker.
     YellowConcrete = 16,
+    /// Oak standing sign — street-name and address signs.
     OakSign = 17,
+    /// Glass pane — window feature on buildings.
     GlassPane = 18,
+    /// Oak stairs — building stair feature.
     OakStairs = 19,
+    /// Oak slab — building floor / step.
     OakSlab = 20,
+    /// Oak fence — building perimeter / barrier.
     OakFence = 21,
+    /// Cobblestone wall — barrier / boundary.
     CobblestoneWall = 22,
+    /// Brick wall material for some building styles.
     Brick = 23,
+    /// Sandstone building material.
     Sandstone = 24,
+    /// Oak planks — wooden building wall/floor.
     OakPlanks = 25,
+    /// Spruce planks — alternative wooden building material.
     SprucePlanks = 26,
+    /// White concrete — modern building wall.
     WhiteConcrete = 27,
+    /// Stone-brick stairs — stair variant for stone buildings.
     StoneBrickStairs = 28,
 
     // === Railways ===
+    /// Rail track block for `railway=*` ways.
     Rail = 29,
 
     // === Decoration: vegetation, lighting, walls, slabs, signs ===
+    /// Tall grass decoration on grass surfaces.
     TallGrass = 30,
+    /// Fern decoration (alternate grass).
     Fern = 31,
+    /// Poppy flower decoration.
     Poppy = 32,
+    /// Torch — small light decoration.
     Torch = 33,
+    /// Lantern — light decoration along roads.
     Lantern = 34,
+    /// Stone-brick wall — decorative wall variant.
     StoneBrickWall = 35,
+    /// Tree trunk for birch forests.
     BirchLog = 36,
+    /// Canopy block placed above birch logs.
     BirchLeaves = 37,
+    /// Polished blackstone slab — primary road surface for motorways and arterials.
     PolishedBlackstoneSlab = 38,
+    /// Smooth stone slab — sidewalk surface paired with `PolishedBlackstoneSlab` roads.
     SmoothStoneSlab = 39,
+    /// Andesite slab — path/footway/cycleway surface.
     AndesiteSlab = 40,
+    /// Cherry wood standing sign — alternate sign variant for some POI decorations.
     CherrySign = 41,
 
     // === Climate: snow & ice ===

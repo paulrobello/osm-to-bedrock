@@ -76,9 +76,9 @@ pre-commit: ## Run pre-commit checks (fmt + lint + test)
 	@cargo test --quiet
 	@echo "Pre-commit checks passed!"
 
-install-hooks: ## Configure git to use .githooks/ for pre-commit
+install-hooks: ## Configure git to use .githooks/ (pre-commit only: fmt --check + clippy + test)
 	git config core.hooksPath .githooks
-	@echo "Git hooks installed from .githooks/"
+	@echo "Git hooks installed from .githooks/ (pre-commit only)"
 
 docker-build: ## Build the Docker image
 	docker build -t osm-to-bedrock .

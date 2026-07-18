@@ -8,6 +8,7 @@ Index of all documentation for the osm-to-bedrock project, organized by location
 |----------|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | High-level architecture — pipeline, module map, coordinate system, streaming tiles, server endpoints |
 | [CLI.md](CLI.md) | Complete CLI flag reference for all subcommands, configuration file format, and environment variables |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker, reverse-proxy, and self-hosting guide — ports, environment variables, and the auth requirement for non-loopback binds |
 | [DEVELOPER_INFO.md](DEVELOPER_INFO.md) | Full architecture reference, module descriptions, coordinate system, block mappings, usage examples, and development guide |
 | [WEB_UI.md](WEB_UI.md) | Web Explorer — component reference, hooks, API proxy layer, map features, keyboard shortcuts |
 | [MINECRAFT_BEDROCK_MAP_FORMAT.md](MINECRAFT_BEDROCK_MAP_FORMAT.md) | Bedrock Edition world format — LevelDB structure, chunk encoding, block states, biomes, entities, level.dat |

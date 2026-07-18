@@ -74,41 +74,45 @@ The library crate (`src/lib.rs`) exposes the following public modules, grouped h
 
 | Layer | Module | Responsibility |
 |-------|--------|----------------|
-| **CLI** | `main.rs` (binary) | Clap subcommands: `convert`, `serve`, `parse`, `overpass`, `terrain-convert`, `cache` |
-| **Pipeline** | `pipeline` | Orchestrates the full conversion flow (streaming and in-memory variants) |
+| **CLI** | `main.rs` (binary) | 16-LOC shim — delegates to `cli::main()` so CLI types can be unit-tested |
+| **CLI** | `cli/` | clap subcommands: `convert`, `serve`, `fetch-convert`, `terrain-convert`, `overture-convert`, `cache`. Shared flag groups `ConvertCommonArgs` + `BuildingArgs`. |
+| **Pipeline** | `pipeline/` | Orchestrates the full conversion flow. `mod.rs` (streaming dispatch), `render.rs` (per-layer `render_*` helpers + `render_osm_features`), `terrain.rs` (terrain fill + `process_tile`), `preview.rs` (in-memory preview entry points), `decoration.rs` (POI/tree decoration), `util.rs` (`zip_directory`, `format_bytes`, `is_closed_way`, `coord_hash`). |
 | **Pipeline** | `params` | `ConvertParams` and `TerrainParams` structs shared by CLI and server |
-| **Pipeline** | `filter` | `FeatureFilter` — boolean toggles for roads, buildings, water, land use, railways |
-| **Pipeline** | `world` | `WorldWriter` trait, `Edition` enum, `ChunkData` — shared abstraction over Bedrock and Java backends |
-| **Data Sources** | `osm` | Parses `.osm.pbf` and `.osm` XML files into `OsmData` (nodes HashMap + ways Vec) |
-| **Data Sources** | `overpass` | Builds Overpass QL queries, fetches from API, writes to disk cache |
-| **Data Sources** | `osm_cache` | Disk cache at `~/.cache/osm-to-bedrock/overpass/`; SHA-256 keyed, supports containment lookups |
-| **Data Sources** | `overture` | Overture Maps GeoJSON/GeoParquet ingestion |
-| **Data Sources** | `elevation` | Loads SRTM HGT tiles, builds height grids, applies to terrain |
-| **Data Sources** | `srtm` | SRTM tile download and HGT file parsing |
+| **Pipeline** | `source_options` | POI source + Overture-failure policy enums shared across convert-family subcommands |
+| **Pipeline** | `world` | `WorldWriter` trait (`flush_tile`/`set_tile_bounds`/`save`), `Edition` enum, `ChunkData`, shared `ChunkStore` (QA-001), `enforce_java_memory_budget` guard (ARC-001) |
+| **Data Sources** | `osm` | **Re-export shim from `par-osm-rust` (=0.1.1).** The real PBF parser lives in the external crate; this file is one line. Extension work belongs upstream. |
+| **Data Sources** | `overpass` | **Re-export shim from `par-osm-rust`.** Overpass QL builder, fetcher, and disk-cache writer are in the external crate. |
+| **Data Sources** | `osm_cache` | **Re-export shim from `par-osm-rust`.** Disk cache (~/.cache/osm-to-bedrock/overpass/), SHA-256 keys, containment lookup all live upstream. |
+| **Data Sources** | `overture` | **Thin re-export shim from `par-osm-rust`** (Overture Maps CLI integration). |
+| **Data Sources** | `elevation` | **Re-export shim from `par-osm-rust`.** SRTM HGT loader, height grids, terrain application live upstream. |
+| **Data Sources** | `srtm` | **Re-export shim from `par-osm-rust`.** SRTM tile download and HGT parsing live upstream. |
+| **Pipeline** | `filter` | **Re-export shim from `par-osm-rust`.** `FeatureFilter` (boolean toggles for roads, buildings, water, land use, railways) is defined upstream. |
 | **Geometry** | `convert` | `CoordConverter` (lat/lon to block), Bresenham line rasterization, scanline polygon fill |
 | **Geometry** | `geometry` | High-level drawing: `draw_road`, `draw_building`, `draw_bridge`, `draw_tunnel`, `draw_waterway`, `draw_roof` |
 | **Geometry** | `spatial` | `SpatialIndex` (type-bucketed + grid-indexed way lookup), `HeightMap`, `TILE_CHUNKS` constant |
 | **Geometry** | `sign` | Street-name sign formatting, nearest-road vector calculation, sign direction |
-| **World Writer** | `bedrock` | `BedrockWorld`, `ChunkWriter` — LevelDB database with SubChunk v8 encoding and `level.dat` |
-| **World Writer** | `anvil` | `JavaWorld` — Anvil region file writer (`.mca`), Java `level.dat`, session.lock |
-| **World Writer** | `blocks` | `Block` enum (60+ variants), OSM tag-to-block mapping, `RoadStyle`, `WaterwayStyle` |
+| **World Writer** | `bedrock` | `BedrockWorld`, `ChunkWriter` — LevelDB database with SubChunk v8 encoding and `level.dat`. `new_streaming` ships encoded SubChunks to a background writer thread tile-by-tile. |
+| **World Writer** | `anvil` | `JavaWorld` — Anvil region file writer (`.mca`), Java `level.dat`, session.lock. Accumulates chunks in memory; oversized Java conversions are refused up front by `enforce_java_memory_budget` until a streaming Anvil writer lands (ARC-001). |
+| **World Writer** | `blocks` | `Block` enum (56 variants), OSM tag-to-block mapping, `RoadStyle`, `WaterwayStyle` |
 | **World Writer** | `nbt` | Minimal little-endian NBT writer (Bedrock uses LE, not BE like Java) |
-| **World Writer** | `nbt_be` | Big-endian NBT writer for Java Edition (TAG_LIST, TAG_LONG_ARRAY, etc.) |
-| **Server** | `server` | Axum HTTP API — multipart upload, background job tracking, `.mcworld` download |
+| **World Writer** | `nbt_be` | Big-endian NBT writer for Java Edition (TAG_LIST, TAG_LONG_ARRAY, TAG_INT_ARRAY) |
+| **Server** | `server/` | Axum HTTP API. Split into `mod.rs` (router + `run`), `state.rs` (jobs/eviction/sanitisation), `error.rs` (generic 500 / explicit 400), `auth.rs` (opt-in API key middleware), `options.rs` (request/response structs + serde defaults + validation), `handlers.rs` (HTTP handlers + `spawn_conversion_job`). |
 | **Server** | `geojson_export` | Converts `OsmData` to GeoJSON `FeatureCollection` for the web frontend |
 | **Metadata** | `metadata` | `WorldMetadata` — records conversion parameters, timing, and source info as `world_info.json` |
-| **Metadata** | `config` | Runtime configuration and environment variable resolution |
+| **Metadata** | `config` | YAML config file (`Config` struct) — load/merge/dump with `--config` / CWD / `~/.config` search chain |
+
+> **Module-tree caveat (ARC-011).** Seven modules — `osm`, `overpass`, `osm_cache`, `filter`, `elevation`, `srtm`, `overture` — are one-line re-export shims from the pinned external crate `par-osm-rust = "=0.1.1"`. The implementations of the PBF parser, Overpass client, disk cache, feature filter, elevation loader, SRTM reader, and Overture integration all live in that crate. Edits to the in-tree stub files are no-ops; extension work belongs in `par-osm-rust`.
 
 ### Layer Dependencies
 
 ```mermaid
 graph TD
-    CLI[CLI - main.rs]
-    Server[Server - server.rs]
-    Pipeline[Pipeline - pipeline / params / filter]
-    DataSources[Data Sources - osm / overpass / osm_cache / elevation / srtm / overture]
+    CLI[CLI - main.rs / cli/]
+    Server[Server - server/]
+    Pipeline[Pipeline - pipeline/ / params / source_options / world]
+    DataSources[Data Sources - shims re-exporting par-osm-rust]
     Geometry[Geometry - convert / geometry / spatial / sign]
-    WorldWriter[World Writer - world / bedrock / anvil / blocks / nbt / nbt_be]
+    WorldWriter[World Writer - bedrock / anvil / blocks / nbt / nbt_be]
     GeoJSON[GeoJSON Export - geojson_export]
     Metadata[Metadata - metadata / config]
 

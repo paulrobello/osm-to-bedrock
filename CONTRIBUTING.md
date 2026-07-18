@@ -48,8 +48,7 @@ make dev
 make checkall
 ```
 
-This runs `fmt + lint + typecheck + test` in sequence and must pass without errors or
-warnings before any commit is made.
+This runs `fmt + lint + typecheck + test + web-check` (Rust format/clippy/check/test, then the Next.js frontend's lint + vitest unit tests + production build) and must pass without errors or warnings before any commit is made.
 
 Individual targets:
 
@@ -124,11 +123,24 @@ docs(readme): add fetch-convert subcommand examples
 ## Project Layout
 
 ```
-src/          Rust source — see docs/DEVELOPER_INFO.md for module descriptions
-web/          Next.js Web Explorer
-docs/         Project documentation
-Makefile      All development targets
-Cargo.toml    Rust dependencies and metadata
+src/                  Rust source (CLI + library + Axum server)
+├── main.rs           16-LOC binary shim — delegates to cli::main()
+├── cli/              clap subcommands (convert/serve/fetch-convert/terrain-convert/overture-convert/cache)
+├── pipeline/         streaming tile-based conversion pipeline (mod/render/terrain/preview/decoration/util)
+├── server/           Axum HTTP API (mod/state/error/auth/options/handlers)
+├── bedrock.rs        BedrockWorld — LevelDB + SubChunk v8 + background ChunkWriter
+├── anvil.rs          JavaWorld — Anvil .mca region files (in-memory until streaming lands)
+├── world.rs          WorldWriter trait, ChunkStore, Edition enum, ChunkData
+├── blocks.rs         Block enum (56 variants) + OSM tag mappings
+└── *.rs              geometry/spatial/sign/convert/params/nbt/nbt_be/geojson_export/metadata/config
+web/                  Next.js Web Explorer (TypeScript, OpenLayers, React Three Fiber)
+docs/                 Project documentation (ARCHITECTURE, CLI, DEVELOPER_INFO, DEPLOYMENT, WEB_UI, …)
+Dockerfile            Three-stage build (Rust + bun + node runtime)
+docker-entrypoint.sh  Container entrypoint — starts Rust API + Next.js, enforces SEC-001 safe-bind
+Makefile              All development targets (build/test/lint/fmt/typecheck/checkall/web-*/docker-*)
+Cargo.toml            Rust dependencies and metadata (par-osm-rust pinned to =0.1.1)
 ```
 
-See [docs/DEVELOPER_INFO.md](docs/DEVELOPER_INFO.md) for a full architecture reference.
+The project targets both **Bedrock** and **Java Edition** Minecraft output via `--edition bedrock|java`. Bedrock streams tile-by-tile; Java accumulates in memory and is bounded by `enforce_java_memory_budget` until a streaming Anvil writer lands.
+
+See [docs/DEVELOPER_INFO.md](docs/DEVELOPER_INFO.md) for a full architecture reference, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the streaming tile pipeline and server layout, and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for Docker and self-hosting.

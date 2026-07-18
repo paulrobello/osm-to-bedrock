@@ -190,7 +190,8 @@ osm-to-bedrock serve --port 3002 --host 127.0.0.1
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--port` | `3002` | Port to listen on |
-| `--host` | `127.0.0.1` | Host address to bind to |
+| `--host` | `127.0.0.1` | Host address to bind to. Non-loopback hosts require `--api-key` or `OSM_TO_BEDROCK_ALLOW_INSECURE_BIND=1`. |
+| `--api-key` | env (`OSM_TO_BEDROCK_API_KEY`) | Shared-secret API key. When set, all routes except `/health` require it in `Authorization: Bearer <key>` or `X-API-Key: <key>`. Falls back to the env var. |
 | `--clear-cache` | -- | Clear Overpass cache before starting (optional age: `7d`, `24h`, `30m`) |
 
 ## cache
@@ -226,7 +227,42 @@ All CLI flags can also be set in a YAML configuration file. The tool searches in
 2. `.osm-to-bedrock.yaml` in the current directory
 3. `~/.config/osm-to-bedrock/config.yaml`
 
-CLI flags override config file values. Use `--dump-config` to print the resolved configuration.
+CLI flags override config file values; every YAML key is optional and unknown keys are silently ignored (forward compatibility). Use `--dump-config` to print the resolved configuration.
+
+### Full key reference
+
+Every key in the `Config` struct (defined in `src/config.rs`). All are optional; "default" is the value used when the key is omitted **and** no CLI flag overrides it.
+
+| Key | Type | Default | Honored by | Description |
+|-----|------|---------|------------|-------------|
+| `scale` | f64 | `1.0` | convert-family | Metres per block (higher = smaller map). |
+| `sea_level` | i32 | `65` | convert-family | Y coordinate of the ground surface. |
+| `building_height` | i32 | `8` | convert-family (except terrain) | Height of generated buildings in blocks. |
+| `wall_straighten_threshold` | i32 | `1` | convert-family (except terrain) | Snap near-axis-aligned walls to straight (0 = off). |
+| `signs` | bool | `false` | convert-family (except terrain) | Place street name signs along named roads. |
+| `address_signs` | bool | `false` | convert-family (except terrain) | Place address signs on building facades. |
+| `poi_markers` | bool | `false` | convert-family (except terrain) | Place POI markers at amenities/shops/tourism nodes. |
+| `poi_decorations` | bool | `true` | convert-family (except terrain) | Place POI decorations (bench, mailbox, cafe, etc.). Config-only — no CLI flag. |
+| `nature_decorations` | bool | `true` | convert-family (except terrain) | Place individual tree decorations. Config-only — no CLI flag. |
+| `vertical_scale` | f64 | `1.0` | convert-family | Blocks per metre of elevation change. |
+| `elevation` | path | — | convert-family | Path to SRTM `.hgt` file or directory for real terrain. |
+| `elevation_smoothing` | i32 | `1` | convert-family | Median-filter radius (0 = off, 1 = 3×3, 2 = 5×5). |
+| `surface_thickness` | i32 | `4` | convert-family | Terrain fill depth below surface in blocks. |
+| `edition` | string | `bedrock` | convert-family | Output edition: `bedrock` or `java`. |
+| `snow_line` | i32 | `80` | terrain-convert | Blocks above sea level where snow appears. |
+| `no_roads` | bool | `false` | fetch-convert | Exclude roads. |
+| `no_buildings` | bool | `false` | fetch-convert | Exclude buildings. |
+| `no_water` | bool | `false` | fetch-convert | Exclude water. |
+| `no_landuse` | bool | `false` | fetch-convert | Exclude land use areas. |
+| `no_railways` | bool | `false` | fetch-convert | Exclude railways. |
+| `overpass_url` | string | `OVERPASS_URL` env / built-in | fetch-convert | Override the Overpass API endpoint. |
+| `overture` | bool | `false` | fetch-convert | Also fetch and merge Overture Maps data. |
+| `overture_themes` | string | all | fetch-convert | Comma-separated Overture themes to fetch. |
+| `overture_timeout` | u64 | `120` | fetch-convert, overture-convert | Timeout in seconds for the Overture CLI. |
+| `poi_source` | string | — | fetch-convert, overture-convert | POI source policy (e.g. `osm-only`, `overture-only`, `both`). |
+| `overture_failure` | string | — | fetch-convert, overture-convert | Overture failure policy (e.g. `strict`, `fail`, `ignore`). |
+
+"convert-family" means `convert`, `fetch-convert`, `overture-convert`, and `terrain-convert` (with the noted exceptions — `terrain-convert` does not render buildings or signs).
 
 Example `.osm-to-bedrock.yaml`:
 
@@ -240,17 +276,21 @@ vertical_scale: 0.5
 surface_thickness: 4
 poi_decorations: true
 nature_decorations: true
+edition: bedrock
 ```
-
-> **Note:** `poi_decorations` and `nature_decorations` are config-file-only settings (no CLI flag). Both default to `true`.
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `OVERPASS_URL` | Override the default Overpass API endpoint (`https://overpass-api.de/api/interpreter`) |
-| `OVERPASS_CACHE_DIR` | Override the disk cache directory (default: `~/.cache/osm-to-bedrock/overpass/`) |
-| `RUST_LOG` | Control log verbosity (e.g. `RUST_LOG=debug`) |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | Override the default Overpass API endpoint (useful for mirrors). |
+| `OVERPASS_CACHE_DIR` | `~/.cache/osm-to-bedrock/overpass/` | Override the disk cache directory. |
+| `RUST_LOG` | `info` | Control log verbosity (`error`, `warn`, `info`, `debug`, `trace`). |
+| `CORS_ALLOWED_ORIGIN` | `http://localhost:8031` | Origin allowed by the API server's CORS layer. Set to the Web Explorer's public origin (e.g. `https://maps.example.com`) for remote deploys; otherwise browser requests from the frontend will be rejected. |
+| `OSM_TO_BEDROCK_API_KEY` | unset | Shared-secret API key for the `serve` subcommand. When set, all routes except `/health` require it in the `Authorization: Bearer <key>` (or `X-API-Key: <key>`) header. Required when binding a non-loopback host. |
+| `OSM_TO_BEDROCK_ALLOW_INSECURE_BIND` | unset | Set to `1` to explicitly accept the risk of binding a non-loopback host without an API key. Avoid in production. |
+
+See [docs/DEPLOYMENT.md](DEPLOYMENT.md) for Docker, reverse-proxy, and self-hosting guidance.
 
 ## Related Documentation
 
