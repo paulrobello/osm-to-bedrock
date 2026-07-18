@@ -311,6 +311,13 @@ impl ChunkWriter {
 /// chunk-coordinate rectangle.  Blocks outside the bounds are silently
 /// ignored, keeping memory usage proportional to the active tile rather than
 /// the entire map.
+///
+/// For the streaming tile pipeline, construct with
+/// [`BedrockWorld::new_streaming`] and drive it via the [`WorldWriter`]
+/// trait's [`WorldWriter::set_tile_bounds`] / [`WorldWriter::flush_tile`]
+/// methods: each tile's chunks are drained to a background [`ChunkWriter`]
+/// thread before the next tile begins, so peak memory stays proportional
+/// to a single tile regardless of total map size.
 pub struct BedrockWorld {
     chunks: HashMap<(i32, i32), ChunkData>,
     output: PathBuf,
@@ -324,6 +331,11 @@ pub struct BedrockWorld {
     /// When set, `set_block` and related methods silently ignore coordinates
     /// outside the given chunk-coordinate rectangle (min_cx, max_cx, min_cz, max_cz).
     chunk_bounds: Option<(i32, i32, i32, i32)>,
+    /// Background LevelDB writer for the streaming path. `None` for the
+    /// in-memory / bounded modes, where `save()` opens a fresh writer.
+    /// When `Some`, [`WorldWriter::flush_tile`] drains accumulated chunks
+    /// to this writer, and `save()` finishes it before writing `level.dat`.
+    stream_writer: Option<ChunkWriter>,
 }
 
 impl BedrockWorld {
@@ -335,6 +347,7 @@ impl BedrockWorld {
             sign_directions: HashMap::new(),
             block_directions: HashMap::new(),
             chunk_bounds: None,
+            stream_writer: None,
         }
     }
 
@@ -353,7 +366,28 @@ impl BedrockWorld {
             sign_directions: HashMap::new(),
             block_directions: HashMap::new(),
             chunk_bounds: Some((min_cx, max_cx, min_cz, max_cz)),
+            stream_writer: None,
         }
+    }
+
+    /// Create a streaming Bedrock world that owns its LevelDB writer.
+    ///
+    /// The world starts unbounded; the streaming tile pipeline calls
+    /// `set_tile_bounds` once per tile, then `flush_tile` to drain the
+    /// tile's chunks to the background writer.  Peak memory stays bounded
+    /// to one tile's worth of `ChunkData`.  Call `save` once at the end
+    /// to finish the writer and emit `level.dat`.
+    pub fn new_streaming(output: PathBuf, db_path: PathBuf) -> Result<Self> {
+        let writer = ChunkWriter::open(db_path)?;
+        Ok(Self {
+            chunks: HashMap::new(),
+            output,
+            block_entities: HashMap::new(),
+            sign_directions: HashMap::new(),
+            block_directions: HashMap::new(),
+            chunk_bounds: None,
+            stream_writer: Some(writer),
+        })
     }
 
     /// Return `true` if (cx, cz) falls within the optional chunk bounds.
@@ -497,12 +531,25 @@ impl BedrockWorld {
 
     /// Write the world to disk with spawn at the given block coordinates.
     ///
-    /// Uses a [`ChunkWriter`] internally so encoding and I/O are pipelined
-    /// on separate threads.
-    #[allow(dead_code)]
-    pub fn save(&self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
+    /// Two modes, selected at construction time:
+    /// - **Streaming** ([`Self::new_streaming`]): finish the background
+    ///   writer (any residual chunks were drained by `flush_tile` after
+    ///   each tile), then emit `level.dat`.
+    /// - **In-memory** ([`Self::new`] / [`Self::new_bounded`]): open a
+    ///   fresh [`ChunkWriter`], encode and write every accumulated chunk,
+    ///   finish the writer, then emit `level.dat`.
+    pub fn save(&mut self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
         std::fs::create_dir_all(&self.output)
             .with_context(|| format!("creating output dir {}", self.output.display()))?;
+
+        if let Some(writer) = self.stream_writer.take() {
+            // Streaming mode: the tile loop already drained every tile's
+            // chunks through `flush_tile`. Just finish the writer thread
+            // and emit level.dat.
+            writer.finish()?;
+            self.write_level_dat(spawn_x, spawn_y, spawn_z)?;
+            return Ok(());
+        }
 
         let db_path = self.output.join("db");
         std::fs::create_dir_all(&db_path)?;
@@ -606,7 +653,30 @@ impl crate::world::WorldWriter for BedrockWorld {
     fn surface_blocks(&self) -> Vec<(i32, i32, i32, String)> {
         BedrockWorld::surface_blocks(self)
     }
-    fn save(&self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
+
+    fn set_tile_bounds(&mut self, min_cx: i32, max_cx: i32, min_cz: i32, max_cz: i32) {
+        self.chunk_bounds = Some((min_cx, max_cx, min_cz, max_cz));
+    }
+
+    fn flush_tile(&mut self) -> Result<()> {
+        // Streaming mode: drain this tile's chunks to the background
+        // LevelDB writer and clear the scratch state so the next tile
+        // starts empty. In-memory mode (no stream_writer) is a no-op —
+        // callers save() the accumulated chunks at the end.
+        //
+        // `take()` + restore avoids the simultaneous `&self.stream_writer`
+        // (immutable) and `&mut self.chunks` (mutable) borrow that a
+        // straightforward `self.drain_chunks_to_writer(writer)` would
+        // trigger.
+        if let Some(writer) = self.stream_writer.take() {
+            let result = self.drain_chunks_to_writer(&writer);
+            self.stream_writer = Some(writer);
+            result?;
+        }
+        Ok(())
+    }
+
+    fn save(&mut self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
         BedrockWorld::save(self, spawn_x, spawn_y, spawn_z)
     }
 }

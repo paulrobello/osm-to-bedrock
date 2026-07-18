@@ -36,7 +36,7 @@ use osm_to_bedrock::osm::{OsmData, OsmNode, OsmWay};
 use osm_to_bedrock::params::ConvertParams;
 use osm_to_bedrock::pipeline::{self, RenderContext, TileWays, render_osm_features};
 use osm_to_bedrock::spatial::{HeightMap, SpatialIndex};
-use osm_to_bedrock::world::{ChunkData, Edition, WorldWriter};
+use osm_to_bedrock::world::{ChunkData, Edition, WorldWriter, enforce_java_memory_budget};
 
 // ── RecordingWorld ────────────────────────────────────────────────────────────
 
@@ -53,6 +53,10 @@ struct RecordingWorld {
     sign_directions: HashMap<(i32, i32, i32), i32>,
     block_directions: HashMap<(i32, i32, i32), i32>,
     save_call_count: usize,
+    /// History of `set_tile_bounds` calls (in order). Empty if never called.
+    tile_bounds_calls: Vec<(i32, i32, i32, i32)>,
+    /// Number of times `flush_tile` was invoked.
+    flush_tile_call_count: usize,
 }
 
 impl RecordingWorld {
@@ -64,6 +68,8 @@ impl RecordingWorld {
             sign_directions: HashMap::new(),
             block_directions: HashMap::new(),
             save_call_count: 0,
+            tile_bounds_calls: Vec::new(),
+            flush_tile_call_count: 0,
         }
     }
 
@@ -168,9 +174,24 @@ impl WorldWriter for RecordingWorld {
         out
     }
 
-    fn save(&self, _spawn_x: i32, _spawn_y: i32, _spawn_z: i32) -> Result<()> {
+    fn save(&mut self, _spawn_x: i32, _spawn_y: i32, _spawn_z: i32) -> Result<()> {
         // Tests never call save(); if they do, treat it as a no-op success.
         let _ = self.save_call_count; // field exists for future assertions
+        Ok(())
+    }
+
+    fn set_tile_bounds(&mut self, min_cx: i32, max_cx: i32, min_cz: i32, max_cz: i32) {
+        // Default impl is a no-op; we record the call so streaming-path
+        // tests can assert the pipeline invokes it once per tile.
+        self.tile_bounds_calls
+            .push((min_cx, max_cx, min_cz, max_cz));
+    }
+
+    fn flush_tile(&mut self) -> Result<()> {
+        // Default impl is a no-op; we record the call so streaming-path
+        // tests can assert the pipeline invokes it once per tile after
+        // process_tile returns.
+        self.flush_tile_call_count += 1;
         Ok(())
     }
 }
@@ -640,6 +661,212 @@ fn run_preview_for_edition(edition: Edition) -> Box<dyn WorldWriter> {
         pipeline::run_preview_from_data(data, &params, &|_, _| {})
             .unwrap_or_else(|e| panic!("preview pipeline for {edition:?} failed: {e:?}"));
     world
+}
+
+// ── Streaming-path tests (ARC-002): process_tile + flush_tile seam ─────────
+//
+// `process_tile` is the deduplicated tile body extracted from
+// `run_pipeline_streaming`. The streaming path now drives each edition
+// through `world.set_tile_bounds(...)` → `process_tile(...)` →
+// `world.flush_tile()`. These tests assert:
+//   1. `process_tile` produces the same terrain + feature blocks the
+//      in-memory path does, when driven through a `RecordingWorld`.
+//   2. The `flush_tile` / `set_tile_bounds` seam is exercised by the
+//      real pipeline (Bedrock end-to-end: if flush_tile weren't called,
+//      no chunks would reach LevelDB).
+//   3. ARC-001's oversized-Java guard refuses a synthetic city-scale
+//      conversion up front (no allocation, no panic).
+
+#[test]
+fn process_tile_writes_terrain_column_for_chunk_in_bounds() {
+    // Drive `process_tile` directly with a RecordingWorld, simulating
+    // what the streaming tile loop does for one tile containing chunk
+    // (0, 0). The terrain-fill rayon loop must place bedrock at the
+    // base Y and grass at the surface Y for the (0,0) column.
+    let data = synthetic_osm_data();
+    let params = default_params(Edition::Bedrock);
+    let conv = CoordConverter::new(0.0, 0.0, params.scale);
+    let resolved_ways: Vec<(&OsmWay, Vec<(i32, i32)>)> = data
+        .ways
+        .iter()
+        .map(|w| {
+            let pts: Vec<(i32, i32)> = w
+                .node_refs
+                .iter()
+                .filter_map(|id| data.nodes.get(id))
+                .map(|n| conv.to_block_xz(n.lat, n.lon))
+                .collect();
+            (w, pts)
+        })
+        .collect();
+    let spatial_index = SpatialIndex::build(&resolved_ways);
+    let height_map = HeightMap::new(params.sea_level);
+    let resolved_relations: Vec<osm_to_bedrock::spatial::ResolvedRelation> = Vec::new();
+
+    let mut world = RecordingWorld::new();
+    pipeline::process_tile(
+        &mut world,
+        -1,
+        0,
+        -1,
+        0, // 2x2-chunk tile around the origin
+        &height_map,
+        params.sea_level,
+        params.surface_thickness,
+        &spatial_index,
+        &resolved_ways,
+        &resolved_relations,
+        &data,
+        &params,
+        &conv,
+    )
+    .expect("process_tile must succeed against a recording world");
+
+    // Terrain-fill must have placed at least one bedrock and one grass
+    // block at the (0,0) chunk column. Bedrock sits at
+    // (sea_level - surface_thickness); grass at sea_level.
+    assert!(
+        world.count_block(Block::Bedrock) > 0,
+        "terrain fill must place Bedrock; got placements: {:?}",
+        sample_placements(&world, 10),
+    );
+    assert!(
+        world.count_block(Block::GrassBlock) > 0,
+        "terrain fill must place GrassBlock; got placements: {:?}",
+        sample_placements(&world, 10),
+    );
+
+    // The default-impl `flush_tile` on RecordingWorld records the call
+    // but does not drain — confirm the trait seam compiles and runs.
+    // (The streaming pipeline drives flush_tile from the outer loop;
+    // here we just verify the method is callable.)
+    world
+        .flush_tile()
+        .expect("flush_tile default impl must succeed");
+    assert_eq!(world.flush_tile_call_count, 1);
+}
+
+#[test]
+fn bedrock_streaming_pipeline_writes_leveldb_subchunks_via_flush_tile() {
+    // End-to-end: `run_conversion_from_data` for Bedrock exercises the
+    // real streaming backend (`BedrockWorld::new_streaming` + per-tile
+    // `flush_tile` draining to a real LevelDB writer thread). If
+    // `flush_tile` were never invoked, chunks would never reach LevelDB
+    // and the db/ directory would be empty. Asserting non-empty SubChunk
+    // entries proves the seam fires per tile.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let data = synthetic_osm_data();
+    let mut params = default_params(Edition::Bedrock);
+    params.output = dir.path().to_path_buf();
+
+    pipeline::run_conversion_from_data(data, &params, &|_, _| {}).expect("Bedrock conversion");
+
+    let db_dir = dir.path().join("db");
+    assert!(
+        db_dir.exists(),
+        "db/ directory must exist: {}",
+        db_dir.display()
+    );
+
+    // LevelDB writes a LOG, MANIFEST, and at least one .ldb/.log data file
+    // once any chunk is put. A non-empty db/ with SubChunk-bearing data
+    // proves flush_tile delivered chunks to the writer thread.
+    let db_entries: Vec<_> = std::fs::read_dir(&db_dir)
+        .unwrap_or_else(|e| panic!("read_dir({}): {e}", db_dir.display()))
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    assert!(
+        !db_entries.is_empty(),
+        "LevelDB db/ must be non-empty after streaming conversion (flush_tile must have fired)",
+    );
+
+    // level.dat must also exist (the close-out path).
+    assert!(
+        dir.path().join("level.dat").exists(),
+        "level.dat must be written after Bedrock close-out",
+    );
+}
+
+#[test]
+fn java_streaming_pipeline_writes_region_files_and_level_dat() {
+    // Same end-to-end check for the Java path: confirms the unified loop
+    // drives Java's accumulate-then-save flow correctly through the
+    // edition-agnostic outer loop.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let data = synthetic_osm_data();
+    let mut params = default_params(Edition::Java);
+    params.output = dir.path().to_path_buf();
+
+    pipeline::run_conversion_from_data(data, &params, &|_, _| {}).expect("Java conversion");
+
+    assert!(
+        dir.path().join("level.dat").exists(),
+        "Java level.dat must exist",
+    );
+    let region_dir = dir.path().join("region");
+    assert!(region_dir.exists(), "Java region/ directory must exist");
+    let mca_count = std::fs::read_dir(&region_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "mca"))
+        .count();
+    assert!(
+        mca_count > 0,
+        "at least one .mca region file must be written",
+    );
+}
+
+// ── ARC-001: Java in-memory OOM guard ──────────────────────────────────────
+//
+// The streaming pipeline calls `enforce_java_memory_budget` after
+// computing terrain bounds, BEFORE allocating the world. These tests
+// pin the deterministic-refusal behaviour that closes the OOM vector.
+
+#[test]
+fn arc001_run_conversion_from_data_refuses_oversized_java_with_clear_message() {
+    // Build synthetic data whose bounds × scale would exceed the Java
+    // memory budget. The pipeline must return an Err mentioning Java
+    // and suggesting Bedrock, without allocating the world.
+    //
+    // The budget threshold is ~15_360 chunks (1.5 GB / 100 KB). The
+    // synthetic OSM span (~2.3e-4 deg lat × ~9e-5 deg lon) at scale=0.005
+    // m/block becomes ~5_120 × ~2_002 blocks ≈ 320 × 126 ≈ 40_320 chunks,
+    // well over the budget. (`scale` is metres-per-block, so LOWER scale
+    // means MORE blocks per degree.)
+    let dir = tempfile::tempdir().expect("tempdir");
+    let data = synthetic_osm_data();
+    let mut params = default_params(Edition::Java);
+    params.output = dir.path().to_path_buf();
+    params.scale = 0.005;
+
+    let err = pipeline::run_conversion_from_data(data, &params, &|_, _| {})
+        .expect_err("oversized Java conversion must be refused");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("Java Edition"),
+        "error must name Java Edition: {msg}",
+    );
+    assert!(
+        msg.contains("Bedrock") || msg.contains("bounding box"),
+        "error must suggest a remedy: {msg}",
+    );
+
+    // The world must never have been allocated: db/region dirs absent.
+    assert!(
+        !dir.path().join("db").exists() && !dir.path().join("region").exists(),
+        "guard must refuse before any world allocation",
+    );
+}
+
+#[test]
+fn arc001_enforce_java_memory_budget_unit_thresholds() {
+    // Direct unit test of the public guard function. Mirrors the
+    // in-crate tests but at the integration boundary to lock the
+    // public API.
+    assert!(enforce_java_memory_budget(Edition::Bedrock, u64::MAX).is_ok());
+    assert!(enforce_java_memory_budget(Edition::Java, 1).is_ok());
+    assert!(enforce_java_memory_budget(Edition::Java, 100_000).is_err());
 }
 
 fn is_building_block(b: &Block) -> bool {

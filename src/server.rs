@@ -392,12 +392,15 @@ const METERS_PER_DEGREE: f64 = 111_320.0;
 /// Maximum block extent per axis that the in-memory conversion pipeline can
 /// handle without risking OOM or runaway rasterisation time.
 ///
-/// 250_000 blocks per axis ≈ 15_625 chunk-columns per axis. Java Edition's
-/// in-memory writer (see ARC-001) OOMs at roughly 6_300 blocks per axis, so
-/// this cap does not by itself prevent every OOM — it is a coarse guardrail
-/// that rejects the obvious abuse cases (continent- and country-spanning
-/// bboxes, scale-bumped metro extracts). The real fix is ARC-001's streaming
-/// writer; once that lands this cap can be raised.
+/// 250_000 blocks per axis ≈ 15_625 chunk-columns per axis. This is a
+/// coarse abuse-guardrail that rejects obvious overreach (continent- and
+/// country-spanning bboxes, scale-bumped metro extracts) up front, before
+/// any work starts. It is layered on top of, not in lieu of, ARC-001's
+/// edition-specific Java memory guard in
+/// [`osm_to_bedrock::world::enforce_java_memory_budget`]: even when this
+/// coarse check passes, the pipeline still refuses Java conversions whose
+/// estimated chunk count exceeds the ~1.5 GB in-memory budget (Java has no
+/// streaming Anvil writer yet).
 ///
 /// At `scale = 1` (default): max bbox span ≈ 2.25° per axis (≈ 250 km at the
 /// equator) — permits every example bbox in `README.md` / `docs/CLI.md`

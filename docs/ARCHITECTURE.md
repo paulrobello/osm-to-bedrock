@@ -202,17 +202,23 @@ sequenceDiagram
 
 For large maps, holding every chunk in memory would be prohibitive. The streaming pipeline in `run_pipeline_streaming` divides the world into square tiles of `TILE_CHUNKS x TILE_CHUNKS` chunks (64 x 64 chunks = 1024 x 1024 blocks per tile).
 
+The pipeline is **edition-agnostic at the outer tile loop**: it constructs one persistent `Box<dyn WorldWriter>` for the whole run, then for each tile calls `world.set_tile_bounds(...)` to scope writes, `process_tile(...)` to fill terrain + render features, and `world.flush_tile()` to drain the tile's state to the edition-specific sink.
+
+- **Bedrock** (`BedrockWorld::new_streaming`) owns a background `ChunkWriter` thread. `set_tile_bounds` scopes `set_block` writes to the tile; `flush_tile` encodes the tile's SubChunks, ships them over a bounded channel to the writer thread, and clears the in-memory chunk map. Peak memory stays bounded to one tile's worth of `ChunkData` regardless of total map size.
+- **Java** does not yet have a streaming Anvil writer. `set_tile_bounds` is a no-op, `flush_tile` is a no-op, and chunks accumulate in `JavaWorld::chunks` for the whole run. To prevent city-scale `edition=java` conversions from OOM-killing the process, the pipeline calls `world::enforce_java_memory_budget(chunk_count)` up front and refuses oversized Java conversions with a clear error (see ARC-001 in `AUDIT.md`). A streaming Anvil writer that lets Java match Bedrock's per-tile memory profile is future work.
+
 **How it works:**
 
 1. **Compute terrain bounds** — a fast pass over all OSM nodes to determine the block-coordinate bounding box
-2. **Pre-compute global HeightMap** — parallel computation of surface Y for every block column (elevation-aware when SRTM data is present)
-3. **Tile iteration** — the chunk bounding box is divided into tiles; each tile is processed independently:
+2. **Java memory guard (ARC-001)** — refuse oversized `edition=java` conversions before any allocation if the estimated chunk count exceeds the ~1.5 GB in-memory budget
+3. **Pre-compute global HeightMap** — parallel computation of surface Y for every block column (elevation-aware when SRTM data is present)
+4. **Tile iteration** — the chunk bounding box is divided into tiles; each tile is processed independently:
+   - `set_tile_bounds` scopes writes to the tile's chunk rectangle
    - Allocate `ChunkData` for every chunk in the tile
    - Fill terrain layers (bedrock, stone, dirt, grass) using Rayon parallel iterators
    - Render OSM features that intersect the tile using spatially-filtered way indices
-   - Encode SubChunks and send key/value pairs to the background `ChunkWriter` thread
-   - Drop the tile's chunk data before starting the next tile
-4. **Background I/O** — `ChunkWriter` owns a dedicated thread that holds the LevelDB `DB` handle. Encoded SubChunk bytes flow over a bounded channel, pipelining CPU encoding with disk writes.
+   - `flush_tile` ships encoded SubChunks to the background `ChunkWriter` thread (Bedrock) and clears the tile's in-memory state; no-op for Java, which retains the chunks for the final region-file write
+5. **Background I/O** — `ChunkWriter` owns a dedicated thread that holds the LevelDB `DB` handle. Encoded SubChunk bytes flow over a bounded channel, pipelining CPU encoding with disk writes.
 
 ```mermaid
 graph TD

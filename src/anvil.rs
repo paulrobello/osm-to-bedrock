@@ -72,7 +72,10 @@ impl JavaWorld {
     }
 
     /// Write the world to disk with spawn at the given block coordinates.
-    pub fn save(&self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
+    ///
+    /// `&mut self` only to satisfy the [`WorldWriter`] trait contract; the
+    /// Java writer doesn't actually mutate state here.
+    pub fn save(&mut self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
         std::fs::create_dir_all(&self.output)
             .with_context(|| format!("creating output dir {}", self.output.display()))?;
 
@@ -192,7 +195,7 @@ impl WorldWriter for JavaWorld {
         result
     }
 
-    fn save(&self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
+    fn save(&mut self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
         JavaWorld::save(self, spawn_x, spawn_y, spawn_z)
     }
 }

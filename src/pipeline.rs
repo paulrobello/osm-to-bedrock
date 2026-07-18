@@ -13,11 +13,19 @@
 //! ## Shared rendering
 //!
 //! Both the in-memory (`run_pipeline`) and streaming (`run_pipeline_streaming`)
-//! paths call [`render_osm_features`] to avoid code duplication.  The only
-//! difference between the two is how chunks are flushed: the streaming path
-//! drains each tile to disk (LevelDB for Bedrock, region files for Java)
-//! before allocating the next; the preview path accumulates everything in
-//! a single in-memory world.
+//! paths call [`render_osm_features`] to avoid code duplication.  The
+//! streaming path is edition-agnostic at the outer tile loop: each tile is
+//! processed through a [`WorldWriter`] that exposes [`WorldWriter::flush_tile`]
+//! to drain the current tile's state. Bedrock's streaming backend overrides
+//! `flush_tile` to ship encoded SubChunks to a background LevelDB writer
+//! thread and clear the in-memory chunk map, so peak memory stays bounded
+//! to one tile. Java's backend leaves `flush_tile` as a no-op and
+//! accumulates the entire world in memory; to prevent city-scale
+//! `edition=java` conversions from OOM-killing the process, the pipeline
+//! calls [`world::enforce_java_memory_budget`] before allocating the world
+//! and refuses oversized Java conversions with a clear error (see ARC-001
+//! in `AUDIT.md`). A streaming Anvil writer that lets Java match Bedrock's
+//! per-tile memory profile is future work.
 
 use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
@@ -42,7 +50,7 @@ use crate::{
     params::{ConvertParams, TerrainParams},
     sign::{format_poi_sign, format_sign_text, nearest_road_vector, vec_to_sign_dir},
     spatial::{HeightMap, ResolvedRelation, SpatialIndex, TILE_CHUNKS, compute_surface_y},
-    world::{self, ChunkData, Edition, MIN_Y, WorldWriter},
+    world::{self, ChunkData, Edition, MIN_Y, WorldWriter, enforce_java_memory_budget},
 };
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
@@ -1819,6 +1827,16 @@ fn run_pipeline_streaming(
         max_cz
     );
 
+    // ARC-001: refuse oversized Java conversions as early as possible
+    // (right after the chunk bounds are known, before the slow height
+    // map precompute). The Java backend accumulates the entire world in
+    // memory; a city-scale `edition=java` pull would OOM the process.
+    // Bedrock streams tile-by-tile and is never subject to the guard.
+    // See [`world::enforce_java_memory_budget`] for the math.
+    let total_chunks_estimate =
+        ((max_cx - min_cx + 1) as u64).saturating_mul((max_cz - min_cz + 1) as u64);
+    enforce_java_memory_budget(params.edition, total_chunks_estimate)?;
+
     // Pass 2: pre-compute global HeightMap (parallel, no ChunkData)
     progress_cb(0.20, "Computing height map");
     let surface = params.sea_level;
@@ -1893,332 +1911,249 @@ fn run_pipeline_streaming(
     std::fs::create_dir_all(&params.output)
         .with_context(|| format!("creating output dir {}", params.output.display()))?;
 
-    if params.edition == Edition::Bedrock {
-        // Bedrock: stream tiles to LevelDB via ChunkWriter
-        let db_path = params.output.join("db");
-        std::fs::create_dir_all(&db_path)?;
-        let chunk_writer = bedrock::ChunkWriter::open(db_path)?;
-
-        // Pass 3: tile-based terrain + feature rendering
-        progress_cb(0.35, "Converting in tiles");
-
-        let tile_cx_count = (max_cx - min_cx + TILE_CHUNKS) / TILE_CHUNKS;
-        let tile_cz_count = (max_cz - min_cz + TILE_CHUNKS) / TILE_CHUNKS;
-        let total_tiles = tile_cx_count * tile_cz_count;
-        log::info!(
-            "Processing {total_tiles} tiles ({tile_cx_count}×{tile_cz_count}, each up to {}×{} chunks)",
-            TILE_CHUNKS,
-            TILE_CHUNKS
-        );
-
-        let mut tile_num = 0i32;
-        let mut last_logged_pct = 0;
-        let mut tile_cx0 = min_cx;
-        while tile_cx0 <= max_cx {
-            let tile_cx1 = (tile_cx0 + TILE_CHUNKS - 1).min(max_cx);
-            let mut tile_cz0 = min_cz;
-            while tile_cz0 <= max_cz {
-                let tile_cz1 = (tile_cz0 + TILE_CHUNKS - 1).min(max_cz);
-                tile_num += 1;
-
-                let tile_progress = 0.35 + 0.50 * (tile_num as f32 / total_tiles as f32);
-                progress_cb(tile_progress, &format!("Tile {tile_num}/{total_tiles}"));
-
-                // Log at every 10% increment
-                let pct = tile_num * 100 / total_tiles.max(1);
-                if pct / 10 > last_logged_pct / 10 {
-                    last_logged_pct = pct;
-                    log::info!("Tile progress: {pct}% ({tile_num}/{total_tiles})");
-                }
-
-                let tile_min_x = tile_cx0 * 16;
-                let tile_max_x = (tile_cx1 + 1) * 16 - 1;
-                let tile_min_z = tile_cz0 * 16;
-                let tile_max_z = (tile_cz1 + 1) * 16 - 1;
-
-                let mut tile_world = bedrock::BedrockWorld::new_bounded(
-                    &params.output,
-                    tile_cx0,
-                    tile_cx1,
-                    tile_cz0,
-                    tile_cz1,
-                );
-
-                // Terrain fill (parallel rayon)
-                let tile_chunks: Vec<(i32, i32)> = (tile_cx0..=tile_cx1)
-                    .flat_map(|cx| (tile_cz0..=tile_cz1).map(move |cz| (cx, cz)))
-                    .collect();
-
-                let filled: Vec<((i32, i32), ChunkData)> = tile_chunks
-                    .par_iter()
-                    .map(|&(cx, cz)| {
-                        let mut chunk = ChunkData::new();
-                        for lx in 0..16i32 {
-                            for lz in 0..16i32 {
-                                let bx = cx * 16 + lx;
-                                let bz = cz * 16 + lz;
-                                let sy = height_map.get(bx, bz);
-                                let base_y = (sy - surface_thickness).max(MIN_Y);
-                                chunk.set(lx, base_y, lz, Block::Bedrock);
-                                for y in (base_y + 1)..(sy - 1).max(base_y + 1) {
-                                    chunk.set(lx, y, lz, Block::Stone);
-                                }
-                                if sy > base_y + 1 {
-                                    chunk.set(lx, sy - 1, lz, Block::Dirt);
-                                }
-                                chunk.set(lx, sy, lz, Block::GrassBlock);
-                            }
-                        }
-                        ((cx, cz), chunk)
-                    })
-                    .collect();
-
-                for ((cx, cz), chunk) in filled {
-                    tile_world.insert_chunk(cx, cz, chunk);
-                }
-
-                // Spatial filter: find way indices intersecting this tile
-                let tile_idx_set: HashSet<usize> = spatial_index
-                    .query_rect(tile_min_x, tile_min_z, tile_max_x, tile_max_z)
-                    .into_iter()
-                    .collect();
-
-                let filter_bucket = |bucket: &Vec<usize>| -> Vec<usize> {
-                    bucket
-                        .iter()
-                        .copied()
-                        .filter(|wi| tile_idx_set.contains(wi))
-                        .collect()
-                };
-
-                let tile_landuse = filter_bucket(&spatial_index.landuse);
-                let tile_waterways = filter_bucket(&spatial_index.waterways);
-                let tile_railways = filter_bucket(&spatial_index.railways);
-                let tile_highways = filter_bucket(&spatial_index.highways);
-                let tile_barriers = filter_bucket(&spatial_index.barriers);
-                let tile_buildings = filter_bucket(&spatial_index.buildings);
-                let tile_pois = filter_bucket(&spatial_index.pois);
-                let tile_address = filter_bucket(&spatial_index.address);
-
-                // Filter relations whose outer polygon bounding box overlaps this tile.
-                //
-                // Using bbox overlap (rather than checking whether any vertex lies inside
-                // the tile) ensures that a large relation whose outer ring spans multiple
-                // tiles is included in every tile it visually covers, even when none of its
-                // vertices happen to fall inside a particular tile.
-                let tile_relations: Vec<&ResolvedRelation> = resolved_relations
-                    .iter()
-                    .filter(|rel| {
-                        rel.outers.iter().any(|outer| {
-                            // Compute the outer ring's axis-aligned bounding box.
-                            let (rel_min_x, rel_max_x, rel_min_z, rel_max_z) = outer.iter().fold(
-                                (i32::MAX, i32::MIN, i32::MAX, i32::MIN),
-                                |(mn_x, mx_x, mn_z, mx_z), &(x, z)| {
-                                    (mn_x.min(x), mx_x.max(x), mn_z.min(z), mx_z.max(z))
-                                },
-                            );
-                            // Two axis-aligned boxes overlap iff they overlap on both axes.
-                            rel_min_x <= tile_max_x
-                                && rel_max_x >= tile_min_x
-                                && rel_min_z <= tile_max_z
-                                && rel_max_z >= tile_min_z
-                        })
-                    })
-                    .collect();
-
-                let ctx = RenderContext {
-                    resolved_ways: &resolved_ways,
-                    resolved_relations: &resolved_relations,
-                    data: &data,
-                    params,
-                    height_map: &height_map,
-                    conv: &conv,
-                    spatial_index: &spatial_index,
-                    surface,
-                };
-                let tile_ways = TileWays {
-                    landuse: &tile_landuse,
-                    waterways: &tile_waterways,
-                    railways: &tile_railways,
-                    highways: &tile_highways,
-                    barriers: &tile_barriers,
-                    buildings: &tile_buildings,
-                    pois: &tile_pois,
-                    address: &tile_address,
-                    relations: &tile_relations,
-                    tile_bounds: Some((tile_min_x, tile_min_z, tile_max_x, tile_max_z)),
-                };
-                render_osm_features(&mut tile_world, &ctx, &tile_ways);
-
-                // Drain tile chunks → async LevelDB writer
-                tile_world
-                    .drain_chunks_to_writer(&chunk_writer)
-                    .with_context(|| {
-                        format!("writing tile ({tile_cx0}..{tile_cx1}, {tile_cz0}..{tile_cz1})")
-                    })?;
-
-                tile_cz0 += TILE_CHUNKS;
-            }
-            tile_cx0 += TILE_CHUNKS;
+    // Construct the persistent writer for the whole pipeline. Both
+    // editions expose the same `WorldWriter` seam: Bedrock's streaming
+    // backend owns a background LevelDB writer; Java's backend
+    // accumulates chunks in memory.
+    let mut world: Box<dyn WorldWriter> = match params.edition {
+        Edition::Bedrock => {
+            let db_path = params.output.join("db");
+            std::fs::create_dir_all(&db_path)?;
+            Box::new(bedrock::BedrockWorld::new_streaming(
+                params.output.clone(),
+                db_path,
+            )?)
         }
+        Edition::Java => params.edition.create_world(&params.output),
+    };
 
-        // Close the channel; the writer thread drains its queue and joins.
-        progress_cb(0.88, "Flushing LevelDB");
-        chunk_writer.finish()?;
+    progress_cb(0.35, "Converting in tiles");
 
-        // Write level.dat
-        progress_cb(0.95, "Writing level.dat");
-        bedrock::BedrockWorld::new(&params.output).write_level_dat(spawn_x, spawn_y, spawn_z)?;
-    } else {
-        // Java edition: accumulate all tiles in memory, then save at the end.
-        progress_cb(0.35, "Converting in tiles");
+    let tile_cx_count = (max_cx - min_cx + TILE_CHUNKS) / TILE_CHUNKS;
+    let tile_cz_count = (max_cz - min_cz + TILE_CHUNKS) / TILE_CHUNKS;
+    let total_tiles = tile_cx_count * tile_cz_count;
+    log::info!(
+        "Processing {total_tiles} tiles ({tile_cx_count}×{tile_cz_count}, each up to {}×{} chunks)",
+        TILE_CHUNKS,
+        TILE_CHUNKS
+    );
 
-        let tile_cx_count = (max_cx - min_cx + TILE_CHUNKS) / TILE_CHUNKS;
-        let tile_cz_count = (max_cz - min_cz + TILE_CHUNKS) / TILE_CHUNKS;
-        let total_tiles = tile_cx_count * tile_cz_count;
-        log::info!(
-            "Processing {total_tiles} tiles ({tile_cx_count}×{tile_cz_count}, each up to {}×{} chunks)",
-            TILE_CHUNKS,
-            TILE_CHUNKS
-        );
+    let mut tile_num = 0i32;
+    let mut last_logged_pct = 0;
+    let mut tile_cx0 = min_cx;
+    while tile_cx0 <= max_cx {
+        let tile_cx1 = (tile_cx0 + TILE_CHUNKS - 1).min(max_cx);
+        let mut tile_cz0 = min_cz;
+        while tile_cz0 <= max_cz {
+            let tile_cz1 = (tile_cz0 + TILE_CHUNKS - 1).min(max_cz);
+            tile_num += 1;
 
-        let mut world = params.edition.create_world(&params.output);
+            let tile_progress = 0.35 + 0.50 * (tile_num as f32 / total_tiles as f32);
+            progress_cb(tile_progress, &format!("Tile {tile_num}/{total_tiles}"));
 
-        let mut tile_num = 0i32;
-        let mut last_logged_pct = 0;
-        let mut tile_cx0 = min_cx;
-        while tile_cx0 <= max_cx {
-            let tile_cx1 = (tile_cx0 + TILE_CHUNKS - 1).min(max_cx);
-            let mut tile_cz0 = min_cz;
-            while tile_cz0 <= max_cz {
-                let tile_cz1 = (tile_cz0 + TILE_CHUNKS - 1).min(max_cz);
-                tile_num += 1;
-
-                let tile_progress = 0.35 + 0.50 * (tile_num as f32 / total_tiles as f32);
-                progress_cb(tile_progress, &format!("Tile {tile_num}/{total_tiles}"));
-
-                let pct = tile_num * 100 / total_tiles.max(1);
-                if pct / 10 > last_logged_pct / 10 {
-                    last_logged_pct = pct;
-                    log::info!("Tile progress: {pct}% ({tile_num}/{total_tiles})");
-                }
-
-                let tile_min_x = tile_cx0 * 16;
-                let tile_max_x = (tile_cx1 + 1) * 16 - 1;
-                let tile_min_z = tile_cz0 * 16;
-                let tile_max_z = (tile_cz1 + 1) * 16 - 1;
-
-                // Terrain fill (parallel rayon)
-                let tile_chunks: Vec<(i32, i32)> = (tile_cx0..=tile_cx1)
-                    .flat_map(|cx| (tile_cz0..=tile_cz1).map(move |cz| (cx, cz)))
-                    .collect();
-
-                let filled: Vec<((i32, i32), ChunkData)> = tile_chunks
-                    .par_iter()
-                    .map(|&(cx, cz)| {
-                        let mut chunk = ChunkData::new();
-                        for lx in 0..16i32 {
-                            for lz in 0..16i32 {
-                                let bx = cx * 16 + lx;
-                                let bz = cz * 16 + lz;
-                                let sy = height_map.get(bx, bz);
-                                let base_y = (sy - surface_thickness).max(MIN_Y);
-                                chunk.set(lx, base_y, lz, Block::Bedrock);
-                                for y in (base_y + 1)..(sy - 1).max(base_y + 1) {
-                                    chunk.set(lx, y, lz, Block::Stone);
-                                }
-                                if sy > base_y + 1 {
-                                    chunk.set(lx, sy - 1, lz, Block::Dirt);
-                                }
-                                chunk.set(lx, sy, lz, Block::GrassBlock);
-                            }
-                        }
-                        ((cx, cz), chunk)
-                    })
-                    .collect();
-
-                for ((cx, cz), chunk) in filled {
-                    world.insert_chunk(cx, cz, chunk);
-                }
-
-                // Spatial filter
-                let tile_idx_set: HashSet<usize> = spatial_index
-                    .query_rect(tile_min_x, tile_min_z, tile_max_x, tile_max_z)
-                    .into_iter()
-                    .collect();
-
-                let filter_bucket = |bucket: &Vec<usize>| -> Vec<usize> {
-                    bucket
-                        .iter()
-                        .copied()
-                        .filter(|wi| tile_idx_set.contains(wi))
-                        .collect()
-                };
-
-                let tile_landuse = filter_bucket(&spatial_index.landuse);
-                let tile_waterways = filter_bucket(&spatial_index.waterways);
-                let tile_railways = filter_bucket(&spatial_index.railways);
-                let tile_highways = filter_bucket(&spatial_index.highways);
-                let tile_barriers = filter_bucket(&spatial_index.barriers);
-                let tile_buildings = filter_bucket(&spatial_index.buildings);
-                let tile_pois = filter_bucket(&spatial_index.pois);
-                let tile_address = filter_bucket(&spatial_index.address);
-
-                let tile_relations: Vec<&ResolvedRelation> = resolved_relations
-                    .iter()
-                    .filter(|rel| {
-                        rel.outers.iter().any(|outer| {
-                            let (rel_min_x, rel_max_x, rel_min_z, rel_max_z) = outer.iter().fold(
-                                (i32::MAX, i32::MIN, i32::MAX, i32::MIN),
-                                |(mn_x, mx_x, mn_z, mx_z), &(x, z)| {
-                                    (mn_x.min(x), mx_x.max(x), mn_z.min(z), mx_z.max(z))
-                                },
-                            );
-                            rel_min_x <= tile_max_x
-                                && rel_max_x >= tile_min_x
-                                && rel_min_z <= tile_max_z
-                                && rel_max_z >= tile_min_z
-                        })
-                    })
-                    .collect();
-
-                let ctx = RenderContext {
-                    resolved_ways: &resolved_ways,
-                    resolved_relations: &resolved_relations,
-                    data: &data,
-                    params,
-                    height_map: &height_map,
-                    conv: &conv,
-                    spatial_index: &spatial_index,
-                    surface,
-                };
-                let tile_ways = TileWays {
-                    landuse: &tile_landuse,
-                    waterways: &tile_waterways,
-                    railways: &tile_railways,
-                    highways: &tile_highways,
-                    barriers: &tile_barriers,
-                    buildings: &tile_buildings,
-                    pois: &tile_pois,
-                    address: &tile_address,
-                    relations: &tile_relations,
-                    tile_bounds: Some((tile_min_x, tile_min_z, tile_max_x, tile_max_z)),
-                };
-                render_osm_features(&mut *world, &ctx, &tile_ways);
-
-                tile_cz0 += TILE_CHUNKS;
+            // Log at every 10% increment.
+            let pct = tile_num * 100 / total_tiles.max(1);
+            if pct / 10 > last_logged_pct / 10 {
+                last_logged_pct = pct;
+                log::info!("Tile progress: {pct}% ({tile_num}/{total_tiles})");
             }
-            tile_cx0 += TILE_CHUNKS;
-        }
 
-        progress_cb(0.88, "Saving world");
-        world.save(spawn_x, spawn_y, spawn_z)?;
+            // Scope the writer to this tile. Bedrock enforces the bounds
+            // on every `set_block`; Java's default-impl no-op leaves the
+            // writer unbounded so it accumulates across tiles.
+            world.set_tile_bounds(tile_cx0, tile_cx1, tile_cz0, tile_cz1);
+
+            // Tile body (terrain fill + spatial filter + render).
+            process_tile(
+                &mut *world,
+                tile_cx0,
+                tile_cx1,
+                tile_cz0,
+                tile_cz1,
+                &height_map,
+                surface,
+                surface_thickness,
+                &spatial_index,
+                &resolved_ways,
+                &resolved_relations,
+                &data,
+                params,
+                &conv,
+            )
+            .with_context(|| {
+                format!("rendering tile ({tile_cx0}..{tile_cx1}, {tile_cz0}..{tile_cz1})")
+            })?;
+
+            // Drain the tile (Bedrock: ship to LevelDB; Java: no-op).
+            world.flush_tile().with_context(|| {
+                format!("flushing tile ({tile_cx0}..{tile_cx1}, {tile_cz0}..{tile_cz1})")
+            })?;
+
+            tile_cz0 += TILE_CHUNKS;
+        }
+        tile_cx0 += TILE_CHUNKS;
     }
+
+    // Close-out (edition-specific only in the progress message; `save`
+    // does the right thing for both backends).
+    let finalize_msg = match params.edition {
+        Edition::Bedrock => "Flushing LevelDB",
+        Edition::Java => "Saving world",
+    };
+    progress_cb(0.88, finalize_msg);
+    world.save(spawn_x, spawn_y, spawn_z)?;
+    progress_cb(0.95, "Writing level.dat");
 
     progress_cb(0.99, "Streaming conversion complete");
     log::info!("Streamed tiles → {}", params.output.display());
 
     Ok((spawn_x, spawn_y, spawn_z))
+}
+
+/// Process one tile's terrain fill + OSM-feature overlay into `world`.
+///
+/// Shared by the (now edition-agnostic) outer tile loop in
+/// [`run_pipeline_streaming`]. The caller is responsible for:
+/// 1. calling `world.set_tile_bounds(...)` with this tile's chunk rect
+///    (so backends that enforce bounds write only in-tile blocks);
+/// 2. calling `world.flush_tile()` after this returns (so streaming
+///    backends drain to disk before the next tile).
+///
+/// The body is the ~300 LOC of terrain-fill rayon loop, spatial-filter
+/// bucketing, relation bbox-overlap filtering, `RenderContext`/`TileWays`
+/// assembly, and the `render_osm_features` call that previously existed
+/// byte-for-byte duplicated in the Bedrock and Java branches.
+#[allow(clippy::too_many_arguments)]
+pub fn process_tile(
+    world: &mut dyn WorldWriter,
+    tile_cx0: i32,
+    tile_cx1: i32,
+    tile_cz0: i32,
+    tile_cz1: i32,
+    height_map: &HeightMap,
+    surface: i32,
+    surface_thickness: i32,
+    spatial_index: &SpatialIndex,
+    resolved_ways: &[(&osm::OsmWay, Vec<(i32, i32)>)],
+    resolved_relations: &[ResolvedRelation],
+    data: &osm::OsmData,
+    params: &ConvertParams,
+    conv: &CoordConverter,
+) -> Result<()> {
+    let tile_min_x = tile_cx0 * 16;
+    let tile_max_x = (tile_cx1 + 1) * 16 - 1;
+    let tile_min_z = tile_cz0 * 16;
+    let tile_max_z = (tile_cz1 + 1) * 16 - 1;
+
+    // Terrain fill (parallel rayon). Each chunk column gets a
+    // bedrock → stone → dirt → grass layer stack capped at the surface Y.
+    let tile_chunks: Vec<(i32, i32)> = (tile_cx0..=tile_cx1)
+        .flat_map(|cx| (tile_cz0..=tile_cz1).map(move |cz| (cx, cz)))
+        .collect();
+
+    let filled: Vec<((i32, i32), ChunkData)> = tile_chunks
+        .par_iter()
+        .map(|&(cx, cz)| {
+            let mut chunk = ChunkData::new();
+            for lx in 0..16i32 {
+                for lz in 0..16i32 {
+                    let bx = cx * 16 + lx;
+                    let bz = cz * 16 + lz;
+                    let sy = height_map.get(bx, bz);
+                    let base_y = (sy - surface_thickness).max(MIN_Y);
+                    chunk.set(lx, base_y, lz, Block::Bedrock);
+                    for y in (base_y + 1)..(sy - 1).max(base_y + 1) {
+                        chunk.set(lx, y, lz, Block::Stone);
+                    }
+                    if sy > base_y + 1 {
+                        chunk.set(lx, sy - 1, lz, Block::Dirt);
+                    }
+                    chunk.set(lx, sy, lz, Block::GrassBlock);
+                }
+            }
+            ((cx, cz), chunk)
+        })
+        .collect();
+
+    for ((cx, cz), chunk) in filled {
+        world.insert_chunk(cx, cz, chunk);
+    }
+
+    // Spatial filter: find way indices intersecting this tile.
+    let tile_idx_set: HashSet<usize> = spatial_index
+        .query_rect(tile_min_x, tile_min_z, tile_max_x, tile_max_z)
+        .into_iter()
+        .collect();
+
+    let filter_bucket = |bucket: &Vec<usize>| -> Vec<usize> {
+        bucket
+            .iter()
+            .copied()
+            .filter(|wi| tile_idx_set.contains(wi))
+            .collect()
+    };
+
+    let tile_landuse = filter_bucket(&spatial_index.landuse);
+    let tile_waterways = filter_bucket(&spatial_index.waterways);
+    let tile_railways = filter_bucket(&spatial_index.railways);
+    let tile_highways = filter_bucket(&spatial_index.highways);
+    let tile_barriers = filter_bucket(&spatial_index.barriers);
+    let tile_buildings = filter_bucket(&spatial_index.buildings);
+    let tile_pois = filter_bucket(&spatial_index.pois);
+    let tile_address = filter_bucket(&spatial_index.address);
+
+    // Filter relations whose outer polygon bounding box overlaps this tile.
+    //
+    // Using bbox overlap (rather than checking whether any vertex lies
+    // inside the tile) ensures that a large relation whose outer ring
+    // spans multiple tiles is included in every tile it visually covers,
+    // even when none of its vertices happen to fall inside a particular
+    // tile.
+    let tile_relations: Vec<&ResolvedRelation> = resolved_relations
+        .iter()
+        .filter(|rel| {
+            rel.outers.iter().any(|outer| {
+                // Compute the outer ring's axis-aligned bounding box.
+                let (rel_min_x, rel_max_x, rel_min_z, rel_max_z) = outer.iter().fold(
+                    (i32::MAX, i32::MIN, i32::MAX, i32::MIN),
+                    |(mn_x, mx_x, mn_z, mx_z), &(x, z)| {
+                        (mn_x.min(x), mx_x.max(x), mn_z.min(z), mx_z.max(z))
+                    },
+                );
+                // Two axis-aligned boxes overlap iff they overlap on both axes.
+                rel_min_x <= tile_max_x
+                    && rel_max_x >= tile_min_x
+                    && rel_min_z <= tile_max_z
+                    && rel_max_z >= tile_min_z
+            })
+        })
+        .collect();
+
+    let ctx = RenderContext {
+        resolved_ways,
+        resolved_relations,
+        data,
+        params,
+        height_map,
+        conv,
+        spatial_index,
+        surface,
+    };
+    let tile_ways = TileWays {
+        landuse: &tile_landuse,
+        waterways: &tile_waterways,
+        railways: &tile_railways,
+        highways: &tile_highways,
+        barriers: &tile_barriers,
+        buildings: &tile_buildings,
+        pois: &tile_pois,
+        address: &tile_address,
+        relations: &tile_relations,
+        tile_bounds: Some((tile_min_x, tile_min_z, tile_max_x, tile_max_z)),
+    };
+    render_osm_features(world, &ctx, &tile_ways);
+
+    Ok(())
 }
 
 /// Run the terrain-only pipeline: SRTM elevation → Bedrock world in memory.
@@ -2389,6 +2324,11 @@ pub fn run_terrain_only_to_disk(
 
     std::fs::create_dir_all(&params.output)
         .with_context(|| format!("creating output dir {}", params.output.display()))?;
+
+    // ARC-001: same Java in-memory guard as the OSM pipeline — the
+    // terrain-only path also uses `JavaWorld::insert_chunk` per tile and
+    // would OOM on a city-scale bbox without this check.
+    enforce_java_memory_budget(params.edition, total_chunks)?;
 
     let sea = params.sea_level;
     let snow_line = params.snow_line;
