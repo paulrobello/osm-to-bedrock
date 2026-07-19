@@ -4,7 +4,7 @@
 ![Runs on Linux | MacOS | Windows](https://img.shields.io/badge/runs%20on-Linux%20%7C%20MacOS%20%7C%20Windows-blue)
 ![Arch x86-64 | ARM | AppleSilicon](https://img.shields.io/badge/arch-x86--64%20%7C%20ARM%20%7C%20AppleSilicon-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Version](https://img.shields.io/badge/version-0.8.0-blue)
+![Version](https://img.shields.io/badge/version-0.9.0-blue)
 
 Convert [OpenStreetMap](https://www.openstreetmap.org/) data into playable **Minecraft Bedrock or Java Edition** worlds. Roads, buildings, waterways, forests, and land-use areas are all mapped to appropriate Minecraft blocks at 1:1 scale (one block = one metre, configurable). Includes a browser-based Web Explorer for selecting areas on a live map and exporting directly to `.mcworld` (Bedrock) files. Java Edition is currently supported via the CLI only.
 

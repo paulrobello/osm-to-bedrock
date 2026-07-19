@@ -38,8 +38,6 @@ export interface ConvertOptions {
   overture?: boolean;
   /** Overture themes to include */
   overtureThemes?: string[];
-  /** Per-theme source priority */
-  overturePriority?: Record<string, string>;
   /** Timeout for Overture CLI calls in seconds */
   overtureTimeout?: number;
   /** Place decorative blocks at POI locations */
@@ -390,7 +388,6 @@ export function useConversion(): UseConversionReturn {
         ...(options.overpassUrl ? { overpass_url: options.overpassUrl } : {}),
         overture: options.overture ?? false,
         overture_themes: options.overtureThemes ?? [],
-        overture_priority: options.overturePriority ?? {},
         overture_timeout: options.overtureTimeout ?? 120,
       };
 

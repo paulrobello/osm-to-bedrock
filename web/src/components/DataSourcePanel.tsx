@@ -64,7 +64,6 @@ interface DataSourcePanelProps {
   onOvertureSettingsChange?: (settings: {
     enabled: boolean;
     themes: string[];
-    priority: Record<string, string>;
   }) => void;
 }
 
@@ -102,14 +101,6 @@ export function DataSourcePanel({
     base: true,
     address: true,
   });
-  const [overturePriority, setOverturePriority] = useState<Record<OvertureTheme, string>>({
-    building: 'overture',
-    transportation: 'overture',
-    place: 'overture',
-    base: 'overture',
-    address: 'overture',
-  });
-
   const handleOverpassUrlChange = (url: string) => {
     setOverpassUrl(url);
     localStorage.setItem('overpass_url', url);
@@ -119,16 +110,11 @@ export function DataSourcePanel({
   // Notify parent whenever overture settings change
   useEffect(() => {
     const enabledThemes = OVERTURE_THEMES.filter((t) => overtureThemes[t]);
-    const priority: Record<string, string> = {};
-    for (const t of enabledThemes) {
-      priority[t] = overturePriority[t];
-    }
     onOvertureSettingsChange?.({
       enabled: overtureEnabled,
       themes: enabledThemes,
-      priority,
     });
-  }, [overtureEnabled, overtureThemes, overturePriority, onOvertureSettingsChange]);
+  }, [overtureEnabled, overtureThemes, onOvertureSettingsChange]);
 
   const clearError = () => setError(null);
 
@@ -559,26 +545,6 @@ export function DataSourcePanel({
                 >
                   {theme}
                 </span>
-                <select
-                  value={overturePriority[theme]}
-                  onChange={(e) =>
-                    setOverturePriority((prev) => ({ ...prev, [theme]: e.target.value }))
-                  }
-                  disabled={!overtureThemes[theme]}
-                  className="rounded font-[family-name:var(--font-dm-sans)] text-[10px]"
-                  style={{
-                    background: 'var(--bg-card, #1a1a2e)',
-                    border: '1px solid var(--border-subtle)',
-                    color: overtureThemes[theme] ? 'var(--text-secondary)' : 'var(--text-muted)',
-                    padding: '2px 4px',
-                    cursor: overtureThemes[theme] ? 'pointer' : 'not-allowed',
-                    opacity: overtureThemes[theme] ? 1 : 0.5,
-                  }}
-                >
-                  <option value="both">both</option>
-                  <option value="overture">overture</option>
-                  <option value="osm">osm</option>
-                </select>
               </div>
             ))}
           </div>

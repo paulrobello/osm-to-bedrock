@@ -70,8 +70,7 @@ export default function Home() {
   const [overtureSettings, setOvertureSettings] = useState<{
     enabled: boolean;
     themes: string[];
-    priority: Record<string, string>;
-  }>({ enabled: false, themes: [], priority: {} });
+  }>({ enabled: false, themes: [] });
   const [mcParams, setMcParams] = useState<{ scale: number; seaLevel: number; surfaceThickness: number }>({ scale: 1.0, seaLevel: 65, surfaceThickness: 4 });
 
   // Compute MC world origin from bbox center

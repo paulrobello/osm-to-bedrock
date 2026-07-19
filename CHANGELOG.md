@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+---
+
+## [0.9.0] — 2026-07-18
+
 _Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 54 of 58 audit issues resolved (ARC-001 streaming Java writer + ARC-010 DashMap landed after the initial run)._
 
 ### Security
@@ -36,11 +42,13 @@ _Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 54 of 
 - Extracted 11 per-layer `render_*` helpers from `render_osm_features` (558 → 34 LOC orchestrator).
 - `NEXT_PUBLIC_API_URL` renamed to server-only `RUST_API_URL` (browser code never read it; the value is no longer baked into the client bundle).
 - **`par-osm-rust` bumped `=0.1.1` → `=0.2.1` (ARC-011 complete).** `source_options` (the seven POI/Overture CLI string parsers + their tests) is donated upstream and consumed here via a `pub use par_osm_rust::source_options::*;` re-export shim. 0.2.x encapsulated `OsmData`, so the terrain/geometry/metadata/GeoJSON paths now read `nodes()` / `ways()` / `ways_by_id()` instead of the private fields, `OvertureParams` literals set `cache_ttl_secs: None`, and test fixtures route through `OsmData::new`.
+- **`par-osm-rust` bumped `=0.2.1` → `=0.3.0` (six breaking changes).** `BBox` newtype replaces `(f64,f64,f64,f64)` tuples at every bbox-taking Overpass/SRTM/sources/Overture call site (CLI validates via `BBox::new`, server via `BBox::from` after the existing `validate_bbox` guard); `OsmData` full encapsulation moves the remaining `relations`/`bounds`/`poi_nodes`/`addr_nodes`/`tree_nodes` fields behind read accessors and migrates every `OsmData::new(...)` (now deprecated) to `OsmData::default()` + the `with_*` builder; `srtm::download_tiles_for_bbox`'s `&dyn Fn(usize, usize, &str)` callback becomes the unified `ProgressFn` (`&mut dyn FnMut(f32, &str)`); `SourceOptions` gains `extra_allowed_hosts`; `overpass::fetch_osm_xml`/`fetch_osm_data` take a trailing host-allowlist slice.
 - Documentation synced to the post-refactor reality (`CLAUDE.md`, `README.md`, `docs/ARCHITECTURE.md`, `docs/DEVELOPER_INFO.md`, `docs/CLI.md`, `docs/WEB_UI.md`, `CONTRIBUTING.md`).
 
 ### Removed
 - Stale graphify git hooks (`.githooks/post-commit`, `.githooks/post-checkout`) — graphify integration was removed from settings/gitignore/CLAUDE.md in 0.8.0 but the local hook files were left behind, silently re-enabling the integration when `make install-hooks` was run. The `pre-commit` hook (fmt + clippy + test) is unaffected and remains the only hook `install-hooks` configures.
 - Truly-dead code flagged by the `#[allow(dead_code)]` audit (3 stale markers + 1 unused function); remaining markers carry intent comments.
+- **Deprecated `ThemePriority` / `--overture-priority` surface** (upstream `par-osm-rust` ARC-102 — the theme-priority feature was never implemented and the priority map was never consulted). Dropped the `--overture-priority` CLI flag, the `overture_priority` server JSON field + its two validation tests, the `ThemePriority` re-export and `parse_overture_priority*` calls, and the matching per-theme priority dropdown in the web UI. `OvertureParams.priority` is still populated (via `..Default::default()`) for upstream struct compatibility but is never read.
 
 ---
 
@@ -187,7 +195,8 @@ _Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 54 of 
 - Roads, buildings, water bodies, waterways, forests, land use areas
 - `level.dat` with creative mode, commands enabled, correct spawn point
 
-[Unreleased]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/paulrobello/osm-to-bedrock/compare/v0.5.0...v0.6.0

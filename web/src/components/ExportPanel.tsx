@@ -31,7 +31,6 @@ interface ExportPanelProps {
   overtureSettings?: {
     enabled: boolean;
     themes: string[];
-    priority: Record<string, string>;
   };
   onParamsChange?: (params: { scale: number; seaLevel: number; surfaceThickness: number }) => void;
 }
@@ -144,7 +143,6 @@ export function ExportPanel({
     overpassUrl,
     overture: overtureSettings?.enabled ?? false,
     overtureThemes: overtureSettings?.themes ?? [],
-    overturePriority: overtureSettings?.priority ?? {},
     ...(spawnPoint ? { spawnLat: spawnPoint.lat, spawnLon: spawnPoint.lon } : {}),
   });
 

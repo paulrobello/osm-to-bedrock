@@ -1,6 +1,6 @@
 [package]
 name = "osm_to_bedrock"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 description = "Convert OpenStreetMap data to Minecraft Bedrock and Java Edition worlds"
 authors = ["Paul Robello <probello@gmail.com>"]
