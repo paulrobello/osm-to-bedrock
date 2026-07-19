@@ -501,7 +501,7 @@ fn render_address_signs(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: 
     let spatial_index = ctx.spatial_index;
 
     let bounds = tile.tile_bounds;
-    for addr in &data.addr_nodes {
+    for addr in data.addr_nodes() {
         let housenumber = match addr.tags.get("addr:housenumber") {
             Some(n) if !n.is_empty() => n.as_str(),
             _ => continue,
@@ -627,7 +627,7 @@ fn render_poi_markers(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &T
     let conv = ctx.conv;
 
     let bounds = tile.tile_bounds;
-    for poi in &data.poi_nodes {
+    for poi in data.poi_nodes() {
         let (px, pz) = conv.to_block_xz(poi.lat, poi.lon);
         if let Some((tx0, tz0, tx1, tz1)) = bounds
             && (px < tx0 || px > tx1 || pz < tz0 || pz > tz1)
@@ -679,7 +679,7 @@ fn render_tree_nodes(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &Ti
     let conv = ctx.conv;
 
     let bounds = tile.tile_bounds;
-    for tree in &data.tree_nodes {
+    for tree in data.tree_nodes() {
         let (tx, tz) = conv.to_block_xz(tree.lat, tree.lon);
         if let Some((bx0, bz0, bx1, bz1)) = bounds
             && (tx < bx0 || tx > bx1 || tz < bz0 || tz > bz1)
@@ -699,7 +699,7 @@ fn render_poi_decorations(world: &mut dyn WorldWriter, ctx: &RenderContext, tile
     let conv = ctx.conv;
 
     let bounds = tile.tile_bounds;
-    for poi in &data.poi_nodes {
+    for poi in data.poi_nodes() {
         let (px, pz) = conv.to_block_xz(poi.lat, poi.lon);
         if let Some((bx0, bz0, bx1, bz1)) = bounds
             && (px < bx0 || px > bx1 || pz < bz0 || pz > bz1)

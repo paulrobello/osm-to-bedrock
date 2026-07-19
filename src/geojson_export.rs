@@ -131,7 +131,7 @@ pub fn to_geojson(data: &OsmData) -> FeatureCollection {
         .collect();
 
     // Convert multipolygon relations to GeoJSON features
-    for rel in &data.relations {
+    for rel in data.relations() {
         let mut polygons: Vec<Vec<Vec<Vec<f64>>>> = Vec::new();
 
         // Resolve outer and inner rings
@@ -235,15 +235,7 @@ mod tests {
         for (id, lat, lon) in nodes {
             node_map.insert(id, OsmNode { lat, lon });
         }
-        OsmData::new(
-            node_map,
-            ways,
-            Vec::new(),
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
+        OsmData::default().with_nodes(node_map).with_ways(ways)
     }
 
     // ── classify_way ─────────────────────────────────────────────────────

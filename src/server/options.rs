@@ -5,12 +5,10 @@
 //! reference, the [`validate_bbox`] / `validate_*_options` guards that
 //! reject out-of-range or continent-scale inputs up front (SEC-004), and the
 //! source-option parsing helpers used by `/fetch-convert` and
-//! `/overture-convert` (Overture themes/priorities/POI modes).
+//! `/overture-convert` (Overture themes/POI modes).
 //!
 //! The [`phase_progress`] helpers translate inner-pipeline progress reports
 //! into the outer per-job progress that `/status` returns.
-
-use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -157,9 +155,6 @@ pub(crate) struct FetchConvertRequest {
     /// Overture themes to fetch (empty = all themes).
     #[serde(default)]
     pub(crate) overture_themes: Vec<String>,
-    /// Per-theme priority override map (theme name → "overture" | "osm" | "both").
-    #[serde(default)]
-    pub(crate) overture_priority: HashMap<String, String>,
     /// Timeout in seconds for the overturemaps CLI subprocess.
     #[serde(default = "default_overture_timeout")]
     pub(crate) overture_timeout: u64,
@@ -611,7 +606,6 @@ pub(crate) fn parse_overture_failure_mode_for_server(
 #[derive(Debug)]
 pub(crate) struct ParsedFetchConvertSourceOptions {
     pub(crate) themes: Vec<crate::params::OvertureTheme>,
-    pub(crate) priority: HashMap<crate::params::OvertureTheme, crate::params::ThemePriority>,
     pub(crate) requested_poi_source_mode: crate::params::PoiSourceMode,
     pub(crate) overture_failure_mode: crate::params::OvertureFailureMode,
 }
@@ -622,8 +616,6 @@ pub(crate) fn parse_fetch_convert_source_options(
     Ok(ParsedFetchConvertSourceOptions {
         themes: crate::source_options::parse_overture_theme_list(&req.overture_themes)
             .context("Invalid overture_themes")?,
-        priority: crate::source_options::parse_overture_priority_map(&req.overture_priority)
-            .context("Invalid overture_priority")?,
         requested_poi_source_mode: parse_poi_source_mode_for_server(req.poi_source.as_deref())
             .context("Invalid POI source mode")?,
         overture_failure_mode: parse_overture_failure_mode_for_server(
@@ -742,42 +734,6 @@ mod tests {
         );
 
         assert!(err.contains("unknown Overture theme 'not-a-theme'"));
-    }
-
-    #[test]
-    fn fetch_convert_source_options_reject_invalid_overture_priority_theme() {
-        let req: FetchConvertRequest = serde_json::from_value(serde_json::json!({
-            "bbox": [51.5, -0.13, 51.52, -0.10],
-            "overture_priority": {
-                "not-a-theme": "osm"
-            }
-        }))
-        .unwrap();
-
-        let err = format!(
-            "{:#}",
-            parse_fetch_convert_source_options(&req).unwrap_err()
-        );
-
-        assert!(err.contains("unknown Overture theme 'not-a-theme'"));
-    }
-
-    #[test]
-    fn fetch_convert_source_options_reject_invalid_overture_priority_value() {
-        let req: FetchConvertRequest = serde_json::from_value(serde_json::json!({
-            "bbox": [51.5, -0.13, 51.52, -0.10],
-            "overture_priority": {
-                "building": "bad-priority"
-            }
-        }))
-        .unwrap();
-
-        let err = format!(
-            "{:#}",
-            parse_fetch_convert_source_options(&req).unwrap_err()
-        );
-
-        assert!(err.contains("unknown priority 'bad-priority'"));
     }
 
     // ── SEC-004: validate_bbox ────────────────────────────────────────────

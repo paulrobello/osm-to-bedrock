@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-pub use par_osm_rust::overture::{OvertureParams, OvertureTheme, ThemePriority};
+pub use par_osm_rust::overture::{OvertureParams, OvertureTheme};
 pub use par_osm_rust::sources::{OvertureFailureMode, PoiSourceMode, SourceOptions, SourceStatus};
 
 /// Parameters for the OSM-to-Bedrock conversion pipeline.
@@ -201,7 +201,6 @@ mod tests {
         let _ = std::any::TypeId::of::<OvertureFailureMode>();
         let _ = std::any::TypeId::of::<SourceStatus>();
         let _ = std::any::TypeId::of::<OvertureTheme>();
-        let _ = std::any::TypeId::of::<ThemePriority>();
     }
 
     // ── Test helper ──────────────────────────────────────────────────────

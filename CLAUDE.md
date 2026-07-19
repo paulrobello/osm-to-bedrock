@@ -112,7 +112,7 @@ This is a Rust CLI that converts OpenStreetMap `.osm.pbf` files into playable Mi
 | `src/geojson_export.rs` | Converts `OsmData` → GeoJSON `FeatureCollection` for the web frontend; classifies ways as road/building/water/landuse/railway/other. |
 | `src/metadata.rs` | `WorldMetadata` — writes `world_info.json` after conversion (parameters, timing, source info). |
 | `src/config.rs` | YAML config file (`Config` struct) — load/merge/dump with `--config` / `.osm-to-bedrock.yaml` / `~/.config/osm-to-bedrock/config.yaml` search chain. |
-| `src/{osm,overpass,osm_cache,filter,elevation,srtm,overture}.rs` | **Thin re-export shims** from the pinned `par-osm-rust = "=0.2.1"` crate (ARC-011). The real parser / Overpass / cache / filter / elevation / SRTM / Overture logic lives there; edits to these 7 stub files are no-ops. Extension work belongs in `par-osm-rust`, not here. |
+| `src/{osm,overpass,osm_cache,filter,elevation,srtm,overture}.rs` | **Thin re-export shims** from the pinned `par-osm-rust = "=0.3.0"` crate (ARC-011). The real parser / Overpass / cache / filter / elevation / SRTM / Overture logic lives there; edits to these 7 stub files are no-ops. Extension work belongs in `par-osm-rust`, not here. |
 
 ### Pipeline shape (streaming, tile-based)
 

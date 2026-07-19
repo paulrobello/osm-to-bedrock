@@ -190,16 +190,11 @@ mod tests {
             tags,
             node_refs: vec![1, 2],
         };
-        // ways_by_id is seeded from each way's `id` by OsmData::new.
-        let data = OsmData::new(
-            nodes,
-            vec![way],
-            vec![],
-            Some((51.5, -0.1, 51.5, -0.09)),
-            vec![],
-            vec![],
-            vec![],
-        );
+        // ways_by_id is rebuilt from each way's `id` by `with_ways`.
+        let data = OsmData::default()
+            .with_nodes(nodes)
+            .with_ways(vec![way])
+            .with_bounds(Some((51.5, -0.1, 51.5, -0.09)));
 
         let tmp = TempDir::new().unwrap();
         let convert_params = ConvertParams {

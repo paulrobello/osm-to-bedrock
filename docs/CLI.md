@@ -107,7 +107,6 @@ Shares most flags with `convert` (scale, sea-level, building-height, spawn, sign
 | `--no-railways` | off | Exclude railways |
 | `--overture` | off | Also fetch and merge Overture Maps data |
 | `--overture-themes` | all | Comma-separated Overture themes to fetch |
-| `--overture-priority` | `""` | Per-theme priority, e.g. `"building=overture,transportation=osm"` |
 | `--overture-timeout` | `120` | Timeout in seconds for the Overture CLI |
 | `--poi-source` | `overture-preferred` (when `--overture` set) | POI source mode: `osm-only`, `overture-only`, `both`, or `overture-preferred` |
 | `--overture-failure` | `fallback-to-osm` (when `--overture` set) | Overture failure behaviour: `fallback-to-osm` or `fail` |

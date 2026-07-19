@@ -210,7 +210,7 @@ pub(crate) fn run_pipeline_streaming(
     // ── Determine origin ─────────────────────────────────────────────────────
     let (origin_lat, origin_lon) = {
         let (min_lat, min_lon, max_lat, max_lon) = data
-            .bounds
+            .bounds()
             .ok_or_else(|| anyhow::anyhow!("OSM file has no nodes"))?;
         ((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0)
     };

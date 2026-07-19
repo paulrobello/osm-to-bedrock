@@ -299,15 +299,10 @@ fn synthetic_osm_data() -> OsmData {
         max_block_lon * ONE_BLOCK_DEG,
     );
 
-    OsmData::new(
-        nodes,
-        ways,
-        Vec::new(),
-        Some(bounds),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    )
+    OsmData::default()
+        .with_nodes(nodes)
+        .with_ways(ways)
+        .with_bounds(Some(bounds))
 }
 
 // ── Hand-built RenderContext for direct-orchestrator tests ────────────────────

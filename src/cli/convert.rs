@@ -7,9 +7,8 @@
 //! SRTM auto-download, world-name joining) live here, keeping the pipeline
 //! itself free of clap types.
 
-use std::collections::HashMap;
-
 use anyhow::Result;
+use par_osm_rust::bbox::BBox;
 
 use crate::cli::args::{ConvertArgs, FetchConvertArgs, OvertureConvertArgs, TerrainConvertArgs};
 use crate::cli::parse_bbox;
@@ -149,7 +148,7 @@ pub fn run_fetch_convert(args: &FetchConvertArgs, config: &Config) -> Result<()>
         .overture_timeout
         .or(config.overture_timeout)
         .unwrap_or(120);
-    let (themes, priority, poi_source_mode, overture_failure_mode) = if overture_enabled {
+    let (themes, poi_source_mode, overture_failure_mode) = if overture_enabled {
         let overture_themes = args
             .overture_themes
             .as_deref()
@@ -167,14 +166,12 @@ pub fn run_fetch_convert(args: &FetchConvertArgs, config: &Config) -> Result<()>
             .unwrap_or("fallback-to-osm");
         (
             source_options::parse_overture_themes(overture_themes)?,
-            source_options::parse_overture_priority(&args.overture_priority)?,
             source_options::parse_poi_source_mode(poi_source)?,
             source_options::parse_overture_failure_mode(overture_failure)?,
         )
     } else {
         (
             crate::params::OvertureTheme::all(),
-            HashMap::new(),
             crate::params::PoiSourceMode::OsmOnly,
             crate::params::OvertureFailureMode::FallbackToOsm,
         )
@@ -186,17 +183,19 @@ pub fn run_fetch_convert(args: &FetchConvertArgs, config: &Config) -> Result<()>
         overture: crate::params::OvertureParams {
             enabled: overture_enabled,
             themes,
-            priority,
             timeout_secs: overture_timeout,
             cache_ttl_secs: None,
+            ..Default::default()
         },
         poi_source_mode,
         overture_failure_mode,
+        extra_allowed_hosts: Vec::new(),
     };
-    let source_result =
-        par_osm_rust::sources::fetch_map_data(bbox, &source_options, &mut |progress, msg| {
-            println!("[{:3.0}%] {msg}", progress * 100.0)
-        })?;
+    let source_result = par_osm_rust::sources::fetch_map_data(
+        &BBox::new(bbox.0, bbox.1, bbox.2, bbox.3)?,
+        &source_options,
+        &mut |progress, msg| println!("[{:3.0}%] {msg}", progress * 100.0),
+    )?;
     for warning in &source_result.warnings {
         log::warn!("{warning}");
     }
@@ -258,14 +257,18 @@ pub fn run_overture_convert(args: &OvertureConvertArgs, config: &Config) -> Resu
     let overture_params = crate::params::OvertureParams {
         enabled: true,
         themes,
-        priority: HashMap::new(),
         timeout_secs: args.overture_timeout,
         cache_ttl_secs: None,
+        ..Default::default()
     };
 
-    let data = overture::fetch_overture_data(bbox, &overture_params, &mut |progress, msg| {
-        println!("[{:3.0}%] {msg}", progress * 100.0);
-    })?;
+    let data = overture::fetch_overture_data(
+        &BBox::new(bbox.0, bbox.1, bbox.2, bbox.3)?,
+        &overture_params,
+        &mut |progress, msg| {
+            println!("[{:3.0}%] {msg}", progress * 100.0);
+        },
+    )?;
 
     let output = args.output.join(&args.world_name);
     std::fs::create_dir_all(&output)?;
@@ -327,13 +330,10 @@ pub fn run_terrain_convert(args: &TerrainConvertArgs, config: &Config) -> Result
         let cache = srtm::cache_dir();
         log::info!("Downloading SRTM tiles to {}…", cache.display());
         srtm::download_tiles_for_bbox(
-            bbox.0,
-            bbox.1,
-            bbox.2,
-            bbox.3,
+            &BBox::new(bbox.0, bbox.1, bbox.2, bbox.3)?,
             &cache,
-            &|i, total, name| {
-                log::info!("  [{}/{}] {}", i + 1, total, name);
+            &mut |_fraction, message| {
+                log::info!("  {message}");
             },
         )?;
         Some(cache)

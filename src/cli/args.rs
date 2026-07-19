@@ -278,10 +278,6 @@ pub struct FetchConvertArgs {
     #[arg(long)]
     pub overture_themes: Option<String>,
 
-    /// Per-theme priority overrides, e.g. "building=overture,transportation=osm"
-    #[arg(long, default_value = "")]
-    pub overture_priority: String,
-
     /// POI source mode: osm-only, overture-only, both, or overture-preferred
     #[arg(long)]
     pub poi_source: Option<String>,

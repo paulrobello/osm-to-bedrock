@@ -15,7 +15,7 @@ name = "osm-to-bedrock"
 path = "src/main.rs"
 
 [dependencies]
-par-osm-rust = "=0.2.1" # pinned: 0.2.x (default features = `blocking`; required for overpass/srtm/reqwest)
+par-osm-rust = "=0.3.0" # pinned: 0.3.x (default features = `blocking`; required for overpass/srtm/reqwest)
 clap = { version = "4.6.1", features = ["derive"] }
 anyhow = "1.0.102"
 serde = { version = "1.0.228", features = ["derive"] }

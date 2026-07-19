@@ -32,6 +32,7 @@ use axum::{
     response::IntoResponse,
 };
 use geojson::GeoJson;
+use par_osm_rust::bbox::BBox;
 use serde_json::json;
 use tokio::sync::OwnedSemaphorePermit;
 use uuid::Uuid;
@@ -258,7 +259,7 @@ pub(crate) async fn parse_pbf_handler(
             };
 
             let bounds = osm_data
-                .bounds
+                .bounds()
                 .map(|(min_lat, min_lon, max_lat, max_lon)| Bounds {
                     min_lat,
                     min_lon,
@@ -297,7 +298,7 @@ pub(crate) async fn fetch_preview_handler(
     };
 
     let mut osm_data = tokio::task::spawn_blocking(move || {
-        crate::overpass::fetch_osm_data(bbox, &filter, true, &overpass_url)
+        crate::overpass::fetch_osm_data(&BBox::from(bbox), &filter, true, &overpass_url, &[])
     })
     .await??;
 
@@ -340,7 +341,7 @@ pub(crate) async fn fetch_preview_handler(
                 ways: osm_data.ways().len(),
             };
             let bounds = osm_data
-                .bounds
+                .bounds()
                 .map(|(min_lat, min_lon, max_lat, max_lon)| Bounds {
                     min_lat,
                     min_lon,
@@ -668,7 +669,8 @@ pub(crate) async fn fetch_block_preview_handler(
     };
 
     let response = tokio::task::spawn_blocking(move || -> Result<PreviewResponse> {
-        let mut data = crate::overpass::fetch_osm_data(bbox, &filter, true, &overpass_url)?;
+        let mut data =
+            crate::overpass::fetch_osm_data(&BBox::from(bbox), &filter, true, &overpass_url, &[])?;
         data.clip_to_bbox(bbox);
 
         let output_dir = tempfile::Builder::new().prefix("osm-preview-").tempdir()?;
@@ -797,9 +799,9 @@ pub(crate) async fn fetch_convert_handler(
             overture: crate::params::OvertureParams {
                 enabled: req_overture,
                 themes: parsed_source_options.themes,
-                priority: parsed_source_options.priority,
                 timeout_secs: req_overture_timeout,
                 cache_ttl_secs: None,
+                ..Default::default()
             },
             poi_source_mode: if req_overture {
                 parsed_source_options.requested_poi_source_mode
@@ -807,11 +809,12 @@ pub(crate) async fn fetch_convert_handler(
                 crate::params::PoiSourceMode::OsmOnly
             },
             overture_failure_mode: parsed_source_options.overture_failure_mode,
+            extra_allowed_hosts: Vec::new(),
         };
         let jobs_fetch = jobs.clone();
         let jid_fetch = jid.clone();
         let source_result = match par_osm_rust::sources::fetch_map_data(
-            bbox,
+            &BBox::from(bbox),
             &source_options,
             &mut |progress, msg| {
                 jobs_fetch.insert(
@@ -1049,15 +1052,15 @@ pub(crate) async fn overture_convert_handler(
         let overture_params = crate::params::OvertureParams {
             enabled: true,
             themes,
-            priority: std::collections::HashMap::new(),
             timeout_secs,
             cache_ttl_secs: None,
+            ..Default::default()
         };
 
         let jobs_ov = jobs.clone();
         let jid_ov = jid.clone();
         let data = match crate::overture::fetch_overture_data(
-            bbox,
+            &BBox::from(bbox),
             &overture_params,
             &mut |progress, msg| {
                 jobs_ov.insert(
@@ -1085,7 +1088,7 @@ pub(crate) async fn overture_convert_handler(
         };
 
         // Check if any data was actually returned.
-        if data.ways().is_empty() && data.poi_nodes.is_empty() && data.addr_nodes.is_empty() {
+        if data.ways().is_empty() && data.poi_nodes().is_empty() && data.addr_nodes().is_empty() {
             set_job_error(
                 &jobs,
                 &jid,
@@ -1287,7 +1290,7 @@ pub(crate) async fn download_handler(
 /// into the persistent cache directory.  Returns the cache `PathBuf`.
 fn download_elevation_for_pbf(pbf_path: &Path, jobs: &Jobs, jid: &str) -> anyhow::Result<PathBuf> {
     let osm_data = crate::osm::parse_pbf(pbf_path)?;
-    let (min_lat, min_lon, max_lat, max_lon) = osm_data.bounds.ok_or_else(|| {
+    let (min_lat, min_lon, max_lat, max_lon) = osm_data.bounds().ok_or_else(|| {
         anyhow::anyhow!("PBF has no bounding box — cannot determine elevation tiles")
     })?;
     download_elevation_for_bbox(min_lat, min_lon, max_lat, max_lon, jobs, jid)
@@ -1321,17 +1324,14 @@ fn download_elevation_for_bbox_mapped(
     let cache = crate::srtm::cache_dir();
     log::info!("SRTM cache: {}", cache.display());
     crate::srtm::download_tiles_for_bbox(
-        min_lat,
-        min_lon,
-        max_lat,
-        max_lon,
+        &BBox::new(min_lat, min_lon, max_lat, max_lon)?,
         &cache,
-        &|i, total: usize, name| {
+        &mut |fraction, message| {
             jobs.insert(
                 jid.to_string(),
                 JobState::Running {
-                    progress: map_progress(i as f32 / total.max(1) as f32),
-                    message: format!("Downloading elevation tile {name} ({}/{total})", i + 1),
+                    progress: map_progress(fraction),
+                    message: message.to_string(),
                 },
             );
         },

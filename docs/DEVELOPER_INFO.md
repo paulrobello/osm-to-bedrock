@@ -113,7 +113,7 @@ graph LR
 
 ```
 osm_to_bedrock/
-├── Cargo.toml           # par-osm-rust pinned to =0.2.1 (ARC-011)
+├── Cargo.toml           # par-osm-rust pinned to =0.3.0 (ARC-011)
 ├── Makefile             # build / test / lint / fmt / typecheck / checkall / web-* / docker-* / serve-stop
 ├── Dockerfile           # three-stage build (Rust + bun + node runtime)
 ├── docker-entrypoint.sh # starts Rust API + Next.js, enforces SEC-001 safe-bind
@@ -177,7 +177,7 @@ osm_to_bedrock/
 > **Stub-module caveat (ARC-011).** The seven modules marked `⚠ re-export shim` above are
 > one-line `pub use par_osm_rust::*;` files. The PBF parser, Overpass client, disk cache,
 > feature filter, elevation loader, SRTM reader, and Overture integration all live in the
-> pinned external crate `par-osm-rust = "=0.2.1"`. Edits to the in-tree stubs are no-ops;
+> pinned external crate `par-osm-rust = "=0.3.0"`. Edits to the in-tree stubs are no-ops;
 > if you need to extend those components, the work belongs in `par-osm-rust`, not here.
 
 ### Data Flow Diagram
@@ -219,7 +219,7 @@ graph TD
 
 > **Shim module (ARC-011).** `src/osm.rs` is a one-line `pub use par_osm_rust::*;` re-export.
 > `OsmData`, `OsmNode`, `OsmWay`, `OsmRelation`, `OsmPoiNode`, and the PBF parser all live
-> in the pinned external `par-osm-rust = "=0.2.1"` crate; the type and behavior descriptions
+> in the pinned external `par-osm-rust = "=0.3.0"` crate; the type and behavior descriptions
 > below are accurate but the source is upstream, not in this repo. Extension work belongs there.
 
 **Purpose:** Parse a `.osm.pbf` file into an in-memory collection of nodes and ways.
@@ -759,7 +759,6 @@ OPTIONS:
         --surface-thickness <INT>       Terrain fill depth below surface [default: 4]
         --overture                      Also fetch and merge Overture Maps data [default: false]
         --overture-themes <STRING>      Comma-separated Overture themes [default: building,transportation,place,base,address]
-        --overture-priority <STRING>    Per-theme priority overrides, e.g. "building=overture,transportation=osm"
         --overture-timeout <INT>        Timeout for overturemaps CLI subprocess [default: 120]
     -h, --help                          Print help
 ```
@@ -827,7 +826,7 @@ The server listens on `127.0.0.1:3002` by default (configurable via `--port` and
 ### elevation and srtm — Terrain Elevation
 
 > **Shim modules (ARC-011).** `src/elevation.rs` and `src/srtm.rs` are one-line re-exports
-> from `par-osm-rust = "=0.2.1"`. The SRTM `.hgt` loader, bilinear interpolation, and the
+> from `par-osm-rust = "=0.3.0"`. The SRTM `.hgt` loader, bilinear interpolation, and the
 > AWS Terrain Tiles auto-downloader all live upstream. Extend the upstream crate to change
 > elevation sampling behavior.
 
@@ -857,7 +856,7 @@ filters and the feature inspector to display tag values.
 
 > **Shim modules (ARC-011).** `src/overpass.rs` and `src/osm_cache.rs` are one-line
 > `pub use par_osm_rust::*;` re-exports. The Overpass QL builder, the fetcher, and the
-> SHA-256-keyed disk cache all live in the pinned external `par-osm-rust = "=0.2.1"` crate.
+> SHA-256-keyed disk cache all live in the pinned external `par-osm-rust = "=0.3.0"` crate.
 > The description below documents the behavior as seen from this crate; if you need to
 > extend it, the work belongs upstream in `par-osm-rust`.
 
@@ -874,7 +873,7 @@ and via the `--clear-cache` flag on the `serve` subcommand (which accepts an opt
 ### filter — Feature Flags
 
 > **Shim module (ARC-011).** `src/filter.rs` is a one-line re-export from
-> `par-osm-rust = "=0.2.1"`. `FeatureFilter` is defined upstream; edit there to extend it.
+> `par-osm-rust = "=0.3.0"`. `FeatureFilter` is defined upstream; edit there to extend it.
 
 **Purpose:** Enable/disable individual feature categories during conversion.
 
@@ -929,7 +928,7 @@ surface_thickness: null
 ### overture — Overture Maps Integration
 
 > **Shim module (ARC-011).** `src/overture.rs` is a thin re-export from
-> `par-osm-rust = "=0.2.1"`. The `overturemaps` CLI wrapper, GeoJSON → OsmData
+> `par-osm-rust = "=0.3.0"`. The `overturemaps` CLI wrapper, GeoJSON → OsmData
 > merge, and synthetic-negative-ID logic all live upstream.
 
 **Purpose:** Fetch building and road data from [Overture Maps](https://overturemaps.org/) via

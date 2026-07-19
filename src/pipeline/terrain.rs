@@ -104,7 +104,7 @@ pub(super) fn resolve_relations<'a>(
     data: &'a osm::OsmData,
     conv: &CoordConverter,
 ) -> Vec<ResolvedRelation<'a>> {
-    data.relations
+    data.relations()
         .iter()
         .filter_map(|rel| {
             let mut outers: Vec<Vec<(i32, i32)>> = Vec::new();

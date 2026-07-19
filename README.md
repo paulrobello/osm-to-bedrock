@@ -201,7 +201,7 @@ osm-to-bedrock fetch-convert \
   --bbox "48.85,2.33,48.87,2.36" --output Paris/ --signs --poi-markers
 ```
 
-Supports all `convert` flags plus: `--bbox`, `--world-name`, `--overpass-url`, `--no-roads`, `--no-buildings`, `--no-water`, `--no-landuse`, `--no-railways`, `--overture`, `--overture-themes`, `--overture-priority`
+Supports all `convert` flags plus: `--bbox`, `--world-name`, `--overpass-url`, `--no-roads`, `--no-buildings`, `--no-water`, `--no-landuse`, `--no-railways`, `--overture`, `--overture-themes`
 
 ### overture-convert
 
