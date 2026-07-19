@@ -27,8 +27,9 @@ make web-kill     # Force-kill Next.js dev server on port 8031
 make docker-build # Build the Docker image
 make docker-run   # Run the Docker container (API on 3002, web on 8031)
 make docker-stop  # Stop the running Docker container
-make install-hooks # Configure git to use .githooks/ for pre-commit
-make pre-commit   # fmt --check + clippy + test (no web-check)
+make install-hooks # Install pre-commit framework git hook (secret scan + fmt/lint/test)
+make pre-commit   # Run all pre-commit hooks repo-wide (secret scan + hygiene + fmt/lint/test)
+make pre-commit-update # Bump pinned hook revs in .pre-commit-config.yaml
 
 # Run a single test
 cargo test test_name

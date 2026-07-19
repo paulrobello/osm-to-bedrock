@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt typecheck checkall web-check web-test docs clean install web-dev web-build web-install web-kill kill stop serve-stop web-stop docker-build docker-run docker-stop pre-commit install-hooks
+.PHONY: build test lint fmt typecheck checkall web-check web-test docs clean install web-dev web-build web-install web-kill kill stop serve-stop web-stop docker-build docker-run docker-stop pre-commit pre-commit-update install-hooks
 
 build:
 	cargo build --release
@@ -73,15 +73,16 @@ kill: ## Force-kill both dev servers (ports 3002 + 8031)
 convert:
 	cargo run --release -- convert --input $(INPUT) --output $(OUTPUT)
 
-pre-commit: ## Run pre-commit checks (fmt + lint + test)
-	@cargo fmt --check
-	@cargo clippy --all-targets -- -D warnings
-	@cargo test --quiet
-	@echo "Pre-commit checks passed!"
+pre-commit: ## Run all pre-commit hooks across the whole repo (secret scan + hygiene + fmt/lint/test)
+	pre-commit run --all-files
 
-install-hooks: ## Configure git to use .githooks/ (pre-commit only: fmt --check + clippy + test)
-	git config core.hooksPath .githooks
-	@echo "Git hooks installed from .githooks/ (pre-commit only)"
+pre-commit-update: ## Bump pinned hook revs in .pre-commit-config.yaml to latest
+	pre-commit autoupdate
+
+install-hooks: ## Install the pre-commit framework's git hook into .git/hooks
+	@git config --unset core.hooksPath 2>/dev/null || true
+	pre-commit install
+	@echo "pre-commit hooks installed (secret scan + hygiene + cargo fmt/lint/test)"
 
 docker-build: ## Build the Docker image
 	docker build -t osm-to-bedrock .

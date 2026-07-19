@@ -1522,8 +1522,9 @@ The `convert` module includes unit tests for:
 | `web-test` | Run web unit tests (`cd web && bun run test`, vitest) |
 | `web-check` | Lint, unit-test, and build-check the Next.js frontend |
 | `checkall` | Run `fmt + lint + typecheck + test + web-check + docs` (run before committing) |
-| `pre-commit` | Run the same checks as the git hook locally: `fmt --check + clippy + test` (no web-check) |
-| `install-hooks` | Configure git to use `.githooks/` for the `pre-commit` hook |
+| `pre-commit` | Run all pre-commit hooks across the repo (secret scan + hygiene + `fmt`/`lint`/`test`) |
+| `pre-commit-update` | Bump pinned hook revs in `.pre-commit-config.yaml` (`pre-commit autoupdate`) |
+| `install-hooks` | Install the pre-commit framework's git hook into `.git/hooks/` |
 | `clean` | Remove build artifacts (`cargo clean`) |
 | `install` | Install binary globally (`cargo install --path .`) |
 | `convert` | Convert a PBF file (requires `INPUT=` and `OUTPUT=` env vars) |
@@ -1543,17 +1544,20 @@ The `convert` module includes unit tests for:
 
 ### Pre-commit Hook
 
-The repository ships a shell-based git hook at `.githooks/pre-commit` (no
-`.pre-commit-config.yaml`). The hook runs `cargo fmt --check`, `cargo clippy --all-targets
--- -D warnings`, and `cargo test --quiet`. Once installed it fires on every `git commit`.
+The repository uses the [pre-commit](https://pre-commit.com) framework, configured in
+`.pre-commit-config.yaml`. It runs two secret scanners (gitleaks + `detect-private-key`),
+standard hygiene hooks (trailing whitespace, EOF fixer, YAML/TOML/large-file/merge-conflict
+checks), and the Rust checks wired to the Make targets (`make fmt` / `make lint` / `make test`).
+Once installed it fires on every `git commit`.
 
 ```bash
-make install-hooks   # One-time: points git at .githooks/ (pre-commit only)
-make pre-commit      # Run the same checks locally without committing
+make install-hooks      # One-time: installs the framework's git hook into .git/hooks/
+make pre-commit         # Run all hooks across the whole repo without committing
+make pre-commit-update  # Bump pinned hook revs to latest
 ```
 
 `make checkall` is the authoritative full gate (it adds `web-check` and `docs` on top of
-the hook's Rust-only checks); run it before pushing.
+the hook's checks); run it before pushing.
 
 ### Adding a New Block Mapping
 
