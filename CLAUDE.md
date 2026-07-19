@@ -103,24 +103,23 @@ This is a Rust CLI that converts OpenStreetMap `.osm.pbf` files into playable Mi
 | `src/spatial.rs` | `SpatialIndex` (type-bucketed + grid-indexed way lookup), `HeightMap`, `TILE_CHUNKS` constant. |
 | `src/sign.rs` | Street-name sign formatting, nearest-road-vector calculation, sign direction. |
 | `src/blocks.rs` | `Block` enum (56 variants, grouped by section comment), OSM tag-to-block mapping, `RoadStyle`, `WaterwayStyle`. |
-| `src/world.rs` | `WorldWriter` trait (`flush_tile`/`set_tile_bounds`/`save`), `Edition` enum, `ChunkData`, shared `ChunkStore` (QA-001) backing both backends, `enforce_java_memory_budget` guard (ARC-001). |
+| `src/world.rs` | `WorldWriter` trait (`flush_tile`/`set_tile_bounds`/`save`), `Edition` enum + `create_world`/`create_world_bounded` factory methods, `ChunkData`, shared `ChunkStore` (QA-001) backing both backends. |
 | `src/bedrock.rs` | `BedrockWorld` (LevelDB + SubChunk v8) with background `ChunkWriter` thread; `new_streaming` streams tile-by-tile. |
-| `src/anvil.rs` | `JavaWorld` (Anvil `.mca` region files + gzip `level.dat` + `session.lock`). Java accumulates in memory; an `enforce_java_memory_budget` guard refuses oversized conversions (~1.5 GB / ~15k chunks) until a streaming Anvil writer lands. |
+| `src/anvil.rs` | `JavaWorld` (Anvil `.mca` region files + gzip `level.dat` + `session.lock`). Two constructors: in-memory `new`/`new_bounded` (public library API) and `new_streaming`, which the tile pipeline uses — `flush_tile` drains the tile's chunks into 32×32 region buffers and lazily writes each `.mca` once the tile containing its max in-bounds chunk has flushed, bounding peak memory to ~one tile (matching Bedrock). |
 | `src/nbt.rs` | Little-endian NBT writer (Bedrock). |
 | `src/nbt_be.rs` | Big-endian NBT writer (Java) with `TAG_LIST` / `TAG_LONG_ARRAY` / `TAG_INT_ARRAY`. |
 | `src/server/{mod,state,error,auth,options,handlers}.rs` | Axum HTTP API. `build_router_with_state` wires 12 routes; `run` is the public entry. Opt-in `require_api_key` middleware (SEC-001), `enforce_safe_bind` startup guard, `validate_bbox` (SEC-004), explicit body limits (SEC-005), `lock_jobs` mutex-poison recovery (QA-003/SEC-006), generic non-leaking error messages (SEC-002/SEC-008), `spawn_conversion_job` helper (QA-004). |
 | `src/geojson_export.rs` | Converts `OsmData` → GeoJSON `FeatureCollection` for the web frontend; classifies ways as road/building/water/landuse/railway/other. |
 | `src/metadata.rs` | `WorldMetadata` — writes `world_info.json` after conversion (parameters, timing, source info). |
 | `src/config.rs` | YAML config file (`Config` struct) — load/merge/dump with `--config` / `.osm-to-bedrock.yaml` / `~/.config/osm-to-bedrock/config.yaml` search chain. |
-| `src/{osm,overpass,osm_cache,filter,elevation,srtm,overture}.rs` | **Thin re-export shims** from the pinned `par-osm-rust = "=0.1.1"` crate (ARC-011). The real parser / Overpass / cache / filter / elevation / SRTM / Overture logic lives there; edits to these 7 stub files are no-ops. Extension work belongs in `par-osm-rust`, not here. |
+| `src/{osm,overpass,osm_cache,filter,elevation,srtm,overture}.rs` | **Thin re-export shims** from the pinned `par-osm-rust = "=0.2.1"` crate (ARC-011). The real parser / Overpass / cache / filter / elevation / SRTM / Overture logic lives there; edits to these 7 stub files are no-ops. Extension work belongs in `par-osm-rust`, not here. |
 
 ### Pipeline shape (streaming, tile-based)
 
 1. **Parse** (`osm` shim → `par-osm-rust::parse_osm_file`) — reads all nodes and ways into `OsmData` (HashMap of nodes + Vec of ways + relations + POI/address/tree nodes).
 2. **Terrain bounds + height map** (`pipeline::terrain`) — pass 1 computes the block-coordinate bbox; pass 2 pre-computes the surface-Y for every block column in parallel (Rayon), with optional median-filter smoothing.
-3. **Java memory guard** (`world::enforce_java_memory_budget`) — refuses oversized `edition=java` conversions up front before any allocation (Bedrock is never subject to it).
-4. **Tile iteration** — the chunk bbox is divided into `TILE_CHUNKS × TILE_CHUNKS` tiles; each tile runs `world.set_tile_bounds(...)` → `process_tile(...)` (terrain fill + spatially-filtered feature render) → `world.flush_tile()`. Bedrock's `flush_tile` ships encoded SubChunks to a background `ChunkWriter` thread and clears the in-memory chunk map; Java's `flush_tile` is a no-op and chunks accumulate for the final region-file write.
-5. **Close-out** — `world.save(spawn_x, spawn_y, spawn_z)` writes `level.dat` (+ `session.lock` for Java); `metadata::write_metadata` writes `world_info.json`. The CLI leaves the world as a directory; the server's `zip_and_persist` helper packages it as `.mcworld` (Bedrock) or `.zip` (Java).
+3. **Tile iteration** — the chunk bbox is divided into `TILE_CHUNKS × TILE_CHUNKS` tiles; each tile runs `world.set_tile_bounds(...)` → `process_tile(...)` (terrain fill + spatially-filtered feature render) → `world.flush_tile()`. Bedrock's `flush_tile` ships encoded SubChunks to a background `ChunkWriter` thread and clears the in-memory chunk map; Java's `flush_tile` drains the tile's chunks into 32×32 region buffers and writes any region whose last contributing tile has flushed. Both editions bound peak memory to ~one tile's worth of `ChunkData`.
+4. **Close-out** — `world.save(spawn_x, spawn_y, spawn_z)` writes `level.dat` (+ `session.lock` for Java); `metadata::write_metadata` writes `world_info.json`. The CLI leaves the world as a directory; the server's `zip_and_persist` helper packages it as `.mcworld` (Bedrock) or `.zip` (Java).
 
 ### Coordinate conventions
 - East → +X, North → −Z (Minecraft's north is −Z)
@@ -129,7 +128,7 @@ This is a Rust CLI that converts OpenStreetMap `.osm.pbf` files into playable Mi
 
 ### Key design decisions
 - World is flat at configurable `--sea-level` (default 65); real elevation available via `--elevation` (SRTM)
-- Streaming tile architecture bounds peak memory to one tile's worth of `ChunkData` (Bedrock); Java is in-memory with a pre-flight budget guard until a streaming Anvil writer lands (ARC-001)
+- Streaming tile architecture bounds peak memory to one tile's worth of `ChunkData` for both editions: Bedrock flushes encoded SubChunks to a background `ChunkWriter` thread, Java drains each tile into lazily-written 32×32 region buffers (streaming Anvil, ARC-001 — the old `enforce_java_memory_budget` up-front guard was removed once streaming landed)
 - SubChunk encoding uses the smallest valid bits-per-block from `[1,2,3,4,5,6,8,16]`
 - LevelDB via `rusty-leveldb` with Mojang-compatible zlib/deflate compressors (IDs 0, 2, 4)
 - `run_conversion` / `run_conversion_from_data` accept a `progress_cb: &dyn Fn(f32, &str)` callback for progress reporting (used by both CLI and server)
