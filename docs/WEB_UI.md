@@ -161,7 +161,7 @@ graph LR
 
 | Component | File | Description |
 |-----------|------|-------------|
-| **DataSourcePanel** | `components/DataSourcePanel.tsx` | Two-mode data source selector: **Overpass** mode fetches OSM data for the drawn bounding box via the Rust backend (cache-aware); **Upload** mode accepts `.osm.pbf` or `.osm` files via drag-and-drop or file picker, supporting multiple files that are merged. Includes an Advanced section for customizing the Overpass API URL (persisted to localStorage) and an Overture Maps section with per-theme toggles and priority controls. |
+| **DataSourcePanel** | `components/DataSourcePanel.tsx` | Two-mode data source selector: **Overpass** mode fetches OSM data for the drawn bounding box via the Rust backend (cache-aware); **Upload** mode accepts `.osm.pbf` or `.osm` files via drag-and-drop or file picker, supporting multiple files that are merged. Includes an Advanced section for customizing the Overpass API URL (persisted to localStorage) and an Overture Maps section with per-theme toggles (the theme-priority dropdown was removed in 0.9.0). |
 | **FeatureInspector** | `components/FeatureInspector.tsx` | Displays the properties and geometry type of the currently selected map feature. Separates OSM tags from internal tags (prefixed with `_`). Shows a type badge color-coded by feature category (road, building, water, landuse). |
 | **LayerPanel** | `components/LayerPanel.tsx` | Lists all map layers with color dot indicators, feature count badges, and eye-icon visibility toggles. Layers include roads, buildings, water, landuse, railway, barriers, cached areas, and block preview. |
 

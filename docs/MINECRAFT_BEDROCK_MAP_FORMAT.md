@@ -538,6 +538,15 @@ This section documents how this project's Bedrock world writer (`bedrock.rs`, `n
 onto the format described above. The implementation targets a minimal but functional subset of
 the full Bedrock format.
 
+The writer has two construction modes. `BedrockWorld::new` and `BedrockWorld::new_bounded`
+accumulate chunks in memory and write them in a single pass at `save()` time. The streaming
+tile pipeline uses `BedrockWorld::new_streaming`, which owns a background `ChunkWriter`
+thread that holds the LevelDB handle. The pipeline calls `set_tile_bounds` and `flush_tile`
+once per tile (each tile spans `TILE_CHUNKS²` chunks); each flush encodes the tile's SubChunks
+on the caller's thread and ships the resulting `(key, value)` byte vectors to the writer
+thread over a bounded channel. This pipelines palette encoding with disk I/O and keeps peak
+memory proportional to a single tile's worth of `ChunkData`, regardless of total map size.
+
 ### What the Writer Produces
 
 **Per-chunk LevelDB entries:**
@@ -583,6 +592,11 @@ the full Bedrock format.
 | `rainLevel` / `lightningLevel` | `0.0` | Clear weather |
 
 The level.dat header uses the standard 8-byte prefix: `[StorageVersion: u32 LE][NBT length: u32 LE]`.
+
+> **Note:** The table above lists the user-visible gameplay fields. The writer also emits
+> ancillary permission, gamerule, and weather fields (e.g. `LevelName`, `LastPlayed`,
+> `eduLevel`, `defaultPlayerPermissions`, `enableCopyCoordinateUI`, `domobloot`, `pvp`,
+> `rainTime`). See `write_level_dat` in `src/bedrock.rs` for the authoritative list.
 
 > **Note:** The writer does not emit `FlatWorldLayers` JSON, entity data (tag 50), modern
 > actor storage (`actorprefix`/`digp`), Data3D biome palettes, or the `lastOpenedWithVersion`

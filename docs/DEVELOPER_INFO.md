@@ -72,16 +72,17 @@ coordinate systems, block mapping, and development guide.
 ## Project Overview
 
 `osm_to_bedrock` converts **OpenStreetMap (OSM)** geographic data into playable
-**Minecraft Bedrock Edition** worlds. Given an OSM export (`.osm.pbf` binary format),
-the tool:
+**Minecraft Bedrock or Java Edition** worlds. Given an OSM export (`.osm.pbf` binary
+format), the tool:
 
 1. Parses nodes and ways from the PBF dataset
 2. Projects geographic coordinates (WGS84 lat/lon) into Minecraft block space using an equirectangular approximation
 3. Maps OSM feature tags to Minecraft block types
-4. Serialises the result as a Bedrock LevelDB world ready to import into Minecraft
+4. Serialises the result as a Bedrock LevelDB world (`.mcworld`) or a Java Anvil world
+   (`.zip` of region files), selected via `--edition bedrock|java`
 
-The output is a world folder that can be opened directly on any platform that supports
-Minecraft Bedrock Edition: Windows, Android, iOS, Xbox, and Nintendo Switch.
+The output is a world folder that can be opened directly in Minecraft Bedrock Edition
+(Windows, Android, iOS, Xbox, Nintendo Switch) or Java Edition (Windows, macOS, Linux).
 
 ---
 
@@ -92,21 +93,31 @@ Minecraft Bedrock Edition: Windows, Android, iOS, Xbox, and Nintendo Switch.
 ```mermaid
 graph LR
     OSM[OSM PBF File]
-    Parse[osm::parse_pbf]
-    Convert[CoordConverter]
-    Map[Block Mapping]
-    Write[BedrockWorld::save]
+    Parse[osm::parse_osm_file]
+    Conv[CoordConverter]
+    Tiles["Tile loop<br/>(64×64 chunks each)"]
+    Writer["WorldWriter trait<br/>(Bedrock LevelDB / Java Anvil)"]
+    Out["world/<br/>level.dat + db/ (Bedrock) or region/ (Java)"]
 
     OSM --> Parse
-    Parse --> Convert
-    Convert --> Map
-    Map --> Write
+    Parse --> Conv
+    Conv --> Tiles
+    Tiles --> Writer
+    Writer --> Out
 
-    style OSM fill:#4a148c,stroke:#9c27b0,stroke-width:2px,color:#ffffff
-    style Parse fill:#1b5e20,stroke:#4caf50,stroke-width:2px,color:#ffffff
-    style Convert fill:#0d47a1,stroke:#2196f3,stroke-width:2px,color:#ffffff
-    style Map fill:#e65100,stroke:#ff9800,stroke-width:3px,color:#ffffff
-    style Write fill:#1a237e,stroke:#3f51b5,stroke-width:2px,color:#ffffff
+    class OSM external
+    class Parse active
+    class Conv info
+    class Tiles primary
+    class Writer warning
+    class Out database
+
+    classDef primary fill:#e65100,stroke:#ff9800,stroke-width:3px,color:#ffffff
+    classDef active fill:#1b5e20,stroke:#4caf50,stroke-width:2px,color:#ffffff
+    classDef warning fill:#ff6f00,stroke:#ffa726,stroke-width:2px,color:#ffffff
+    classDef info fill:#0d47a1,stroke:#2196f3,stroke-width:2px,color:#ffffff
+    classDef database fill:#1a237e,stroke:#3f51b5,stroke-width:2px,color:#ffffff
+    classDef external fill:#4a148c,stroke:#9c27b0,stroke-width:2px,color:#ffffff
 ```
 
 ### Module Tree
@@ -122,7 +133,7 @@ osm_to_bedrock/
 │   ├── lib.rs           # Library crate root — declares all public modules
 │   ├── config.rs        # YAML config file loading, merging, and dumping
 │   ├── params.rs        # ConvertParams, TerrainParams — shared parameter structs
-│   ├── source_options.rs # POI source + Overture-failure policy enums (shared by convert-family subcommands)
+│   ├── source_options.rs # ⚠ re-export shim from par-osm-rust (POI source + Overture-failure policy enums upstream)
 │   ├── cli/             # clap CLI (ARC-008): Cli, Commands enum, shared flag groups
 │   │   ├── mod.rs       # cli::main() dispatch
 │   │   ├── args.rs      # Cli, Commands, ConvertCommonArgs, BuildingArgs
@@ -174,24 +185,25 @@ osm_to_bedrock/
     └── MINECRAFT_BEDROCK_TOOLS_AND_IMPORT.md
 ```
 
-> **Stub-module caveat (ARC-011).** The seven modules marked `⚠ re-export shim` above are
+> **Stub-module caveat (ARC-011).** The eight modules marked `⚠ re-export shim` above are
 > one-line `pub use par_osm_rust::*;` files. The PBF parser, Overpass client, disk cache,
-> feature filter, elevation loader, SRTM reader, and Overture integration all live in the
-> pinned external crate `par-osm-rust = "=0.5.0"`. Edits to the in-tree stubs are no-ops;
-> if you need to extend those components, the work belongs in `par-osm-rust`, not here.
+> feature filter, elevation loader, SRTM reader, Overture integration, and the shared
+> POI-source / Overture-failure policy enums all live in the pinned external crate
+> `par-osm-rust = "=0.5.0"`. Edits to the in-tree stubs are no-ops; if you need to extend
+> those components, the work belongs in `par-osm-rust`, not here.
 
 ### Data Flow Diagram
 
 ```mermaid
 graph TD
     PBF[".osm.pbf file"]
-    ParsePBF["osm::parse_pbf()"]
+    ParsePBF["osm::parse_osm_file()"]
     OsmData["OsmData { nodes, ways, bounds }"]
     Conv["CoordConverter::to_block_xz()"]
     Terrain["Fill base terrain (bedrock/stone/dirt/grass)"]
     Features["Overlay OSM features (roads, buildings, water, landuse)"]
-    World["BedrockWorld::save()"]
-    LDB["LevelDB db/ + level.dat"]
+    World["WorldWriter::save()"]
+    LDB["db/ + level.dat (Bedrock) or region/ + level.dat (Java)"]
 
     PBF --> ParsePBF
     ParsePBF --> OsmData
@@ -226,7 +238,18 @@ graph TD
 
 #### Key Types
 
+> **Tag keys are interned (ENH-008, par-osm-rust 0.5.0).** Every `tags` field below is
+> a `TagMap = HashMap<TagKey, String>` where `TagKey = Arc<str>`. The shared `Arc<str>`
+> keys dedupe the cost of repeated tag names (`highway`, `name`, `building`, …) across
+> millions of ways. Treat tag keys as opaque borrowed strings (`&str` via `Arc::as_ref`)
+> rather than `String` values.
+
 ```rust
+/// Interned OSM tag key (par-osm-rust 0.5.0).
+pub type TagKey = Arc<str>;
+/// Free-form OSM tag map used by every feature-bearing struct.
+pub type TagMap = HashMap<TagKey, String>;
+
 /// A geographic point from the OSM dataset.
 pub struct OsmNode {
     pub lat: f64,
@@ -234,8 +257,10 @@ pub struct OsmNode {
 }
 
 /// An OSM way: an ordered sequence of node references with tags.
+/// `id` is the way's own OSM identifier (QA-021, single source of truth).
 pub struct OsmWay {
-    pub tags: HashMap<String, String>,
+    pub id: i64,
+    pub tags: TagMap,
     pub node_refs: Vec<i64>,
 }
 
@@ -244,7 +269,9 @@ pub struct OsmWay {
 pub struct OsmPoiNode {
     pub lat: f64,
     pub lon: f64,
-    pub tags: HashMap<String, String>,
+    pub tags: TagMap,
+    /// Provenance of this POI — OSM, Overture, or Synthetic.
+    pub source: FeatureSource,
 }
 
 /// A member of an OSM relation with its role.
@@ -254,41 +281,56 @@ pub struct RelationMember {
 }
 
 /// An OSM relation: a collection of ways with roles and tags.
+/// `id` is the relation's own OSM identifier (ARC-113).
 pub struct OsmRelation {
-    pub tags: HashMap<String, String>,
+    pub id: i64,
+    pub tags: TagMap,
     pub members: Vec<RelationMember>,
 }
 
 /// Parsed OSM dataset.
+///
+/// **Field encapsulation (ARC-109, par-osm-rust 0.3.0).** Every collection on
+/// `OsmData` is `pub(crate)`; downstream consumers read them through accessors
+/// (`data.nodes()`, `data.ways()`, `data.ways_by_id()`, `data.relations()`,
+/// `data.bounds()`, `data.poi_nodes()`, `data.addr_nodes()`, `data.tree_nodes()`,
+/// plus `data.iter_ways()` and `data.way_id_at()`). Construct an `OsmData` via
+/// `OsmData::default()` plus the `with_*` builder methods (`with_nodes`,
+/// `with_ways`, …). The historical `OsmData::new` constructor is retained
+/// through the 0.3.x deprecation window but emits a `deprecated` warning per call.
 pub struct OsmData {
-    pub nodes: HashMap<i64, OsmNode>,
-    pub ways: Vec<OsmWay>,
+    pub(crate) nodes: HashMap<i64, OsmNode>,
+    pub(crate) ways: Vec<OsmWay>,
     /// Way lookup by ID for relation member resolution.
-    pub ways_by_id: HashMap<i64, usize>,
+    pub(crate) ways_by_id: HashMap<i64, usize>,
     /// Multipolygon relations.
-    pub relations: Vec<OsmRelation>,
-    /// Bounding box: (min_lat, min_lon, max_lat, max_lon)
-    pub bounds: Option<(f64, f64, f64, f64)>,
+    pub(crate) relations: Vec<OsmRelation>,
+    /// Bounding box: (south, west, north, east)
+    pub(crate) bounds: Option<(f64, f64, f64, f64)>,
     /// Standalone nodes with POI tags (amenity, shop, tourism, leisure, historic).
-    pub poi_nodes: Vec<OsmPoiNode>,
+    pub(crate) poi_nodes: Vec<OsmPoiNode>,
     /// Standalone nodes with address tags (addr:housenumber).
-    pub addr_nodes: Vec<OsmPoiNode>,
+    pub(crate) addr_nodes: Vec<OsmPoiNode>,
     /// Individual tree positions (from OSM natural=tree or Overture land/tree).
-    pub tree_nodes: Vec<OsmNode>,
+    pub(crate) tree_nodes: Vec<OsmNode>,
 }
 ```
 
-#### Parser Function
+#### Parser Functions
 
 ```rust
-/// Parse a .osm.pbf file and return all nodes and ways.
+/// Parse a `.osm.pbf` file and return all nodes and ways.
 pub fn parse_pbf(path: &Path) -> Result<OsmData>;
+
+/// Dispatch by file extension: `.osm.pbf` → PBF parser, `.osm` / `.xml` → XML parser.
+/// This is the entry point the streaming pipeline actually calls.
+pub fn parse_osm_file(path: &Path) -> Result<OsmData>;
 ```
 
-The parser handles both `Node` and `DenseNode` PBF elements. It computes a bounding box from
-all parsed nodes. Relations are parsed for multipolygon support. Standalone POI nodes (with
-amenity, shop, tourism, leisure, or historic tags) and address nodes are collected separately
-for marker and label placement.
+The PBF parser handles both `Node` and `DenseNode` PBF elements. Both parsers compute a
+bounding box from all parsed nodes. Relations are parsed for multipolygon support.
+Standalone POI nodes (with amenity, shop, tourism, leisure, or historic tags) and address
+nodes are collected separately for marker and label placement.
 
 #### Supported Input Formats
 
@@ -528,7 +570,7 @@ pub struct WaterwayStyle {
 }
 
 /// Map waterway=* and OSM width/depth tags to a waterway style.
-pub fn waterway_to_style(waterway_type: &str, tags: &HashMap<String, String>, scale: f64) -> WaterwayStyle;
+pub fn waterway_to_style(waterway_type: &str, tags: &TagMap, scale: f64) -> WaterwayStyle;
 
 /// Block for natural=* features.
 pub fn natural_to_block(natural: &str) -> Block;
@@ -647,7 +689,7 @@ pub fn write_byte_tag(w: &mut impl Write, name: &str, value: i8) -> Result<()>;
 > **Refactor (ARC-008).** `src/main.rs` is now a 16-LOC binary shim that delegates to
 > `cli::main()`. The CLI itself lives in `src/cli/{mod,args,convert,cache}.rs`:
 > `Cli`, the `Commands` enum, the shared flag groups `ConvertCommonArgs` + `BuildingArgs`,
-> and the per-subcommand `run_*` helpers. The three-pass build loop moved to
+> and the per-subcommand `run_*` helpers. The streaming tile pipeline moved to
 > `src/pipeline/` (ARC-003) — see `run_pipeline_streaming` in `pipeline/mod.rs`.
 
 **Purpose:** Parse command-line arguments and drive the streaming tile conversion pipeline.
@@ -693,6 +735,7 @@ OPTIONS:
         --vertical-scale <FLOAT>        Blocks per metre of elevation change [default: 1.0]
         --elevation-smoothing <INT>     Median-filter radius for elevation smoothing (0=off, 1=3x3, 2=5x5)
         --surface-thickness <INT>       Terrain fill depth below surface [default: 4]
+        --edition <bedrock|java>        Output edition [default: bedrock]
         --watch                         Watch the input file for changes and re-convert automatically [default: false]
         --config <PATH>                 Path to a YAML config file (overrides default search locations)
         --dump-config                   Print the resolved configuration as YAML and exit
@@ -727,6 +770,7 @@ OPTIONS:
         --vertical-scale <FLOAT>        Blocks per metre of elevation change [default: 1.0]
         --elevation-smoothing <INT>     Median-filter radius for elevation smoothing
         --surface-thickness <INT>       Terrain fill depth below surface [default: 4]
+        --edition <bedrock|java>        Output edition [default: bedrock]
         --overture-timeout <INT>        Timeout for overturemaps CLI subprocess [default: 120]
     -h, --help                          Print help
 ```
@@ -759,6 +803,9 @@ OPTIONS:
         --surface-thickness <INT>       Terrain fill depth below surface [default: 4]
         --overture                      Also fetch and merge Overture Maps data [default: false]
         --overture-themes <STRING>      Comma-separated Overture themes [default: building,transportation,place,base,address]
+        --poi-source <STRING>           POI source mode: osm-only, overture-only, both, overture-preferred
+        --overture-failure <STRING>     Overture failure behavior: fallback-to-osm or fail
+        --edition <bedrock|java>        Output edition [default: bedrock]
         --overture-timeout <INT>        Timeout for overturemaps CLI subprocess [default: 120]
     -h, --help                          Print help
 ```
@@ -776,17 +823,38 @@ cache clear [--older-than AGE]  Clear cached entries (optionally only those olde
     --overture-only             Clear only Overture cache entries
 ```
 
-#### Three-Pass Pipeline
+#### Streaming Tile Pipeline
 
-The main function processes OSM data in three passes:
+The pipeline (`run_pipeline_streaming` in `src/pipeline/mod.rs`) processes the world in
+fixed-size tiles (`TILE_CHUNKS × TILE_CHUNKS` = 64×64 chunks each) so peak memory stays
+bounded to one tile regardless of total map area. Both editions stream tile-by-tile through
+the same `WorldWriter` seam (ARC-001):
 
-1. **Pass 1 — Collect chunks**: Iterate all ways to determine which chunks need terrain
-2. **Pass 2 — Fill base terrain**: For each terrain chunk, fill layers bottom-to-top:
-   - Y=0: `Bedrock`
-   - Y=1 to (sea_level-2): `Stone`
-   - Y=(sea_level-1): `Dirt`
-   - Y=sea_level: `GrassBlock`
-3. **Pass 3 — Overlay features**: Process ways in priority order: highways, waterways, buildings, natural water, natural/landuse areas
+1. **Parse** OSM data via `osm::parse_osm_file` (file path) or accept pre-fetched
+   `OsmData` (Overpass / Overture flows).
+2. **Pass 1 — Terrain bounds** (`terrain::compute_terrain_bounds`): walk every way to
+   compute the block-coordinate bounding box and the chunk-coordinate rectangle.
+3. **Pass 2 — Height map** (parallel via Rayon): pre-compute the surface-Y for every
+   block column in the rectangle into a bounded `HeightMap`; optional median-filter
+   smoothing when `--elevation` is supplied. No `ChunkData` is allocated yet.
+4. **Spatial index** (`SpatialIndex::build`): bucket the resolved ways by category
+   (highway / building / waterway / landuse / railway / barrier / POI / address) and grid.
+5. **Tile iteration** — for each tile in the rectangle:
+   - `world.set_tile_bounds(...)` scopes subsequent writes to the tile (Bedrock enforces
+     the bounds; Java's streaming `flush_tile` lazily drains into 32×32 region buffers).
+   - `terrain::process_tile(...)` fills base terrain (Bedrock → Stone → Dirt → GrassBlock,
+     with Sand/Water/Snow at the surface per biome/elevation) and overlays features via
+     `render::render_osm_features` (QA-006) in priority order: highways, waterways,
+     buildings, natural water, natural, landuse.
+   - `world.flush_tile()` drains the tile (Bedrock ships encoded SubChunks to a background
+     `ChunkWriter` thread; Java writes any region whose last contributing tile has flushed).
+6. **Close-out** — `world.save(spawn_x, spawn_y, spawn_z)` writes `level.dat`
+   (+ `session.lock` for Java) and finishes any region/LevelDB writers; `metadata::write_metadata`
+   emits `world_info.json`.
+
+The historical `enforce_java_memory_budget` up-front guard was removed once streaming
+landed — both editions bound peak memory to one tile's worth of `ChunkData` plus a small
+frontier of region buffers.
 
 ---
 
@@ -1661,7 +1729,7 @@ RUST_LOG=debug osm-to-bedrock convert --input map.osm.pbf --output test_world
 | **FinalizedState = 2** | Required by Bedrock to mark chunks as fully generated; without it, the game regenerates terrain |
 | **Creative mode + Peaceful difficulty** | OSM worlds are exploration maps, not survival games; Peaceful difficulty and disabled mob spawning ensure a distraction-free experience |
 | **Version 8 SubChunks** | Current standard format supported by all Bedrock versions since 1.2.13 |
-| **Three-pass pipeline** | Pass 1 collects affected chunks, Pass 2 fills terrain, Pass 3 overlays features — avoids overwriting terrain with features and vice versa |
+| **Streaming tile pipeline (ARC-001/ARC-003)** | The world is processed in `TILE_CHUNKS × TILE_CHUNKS` (64×64-chunk) tiles so peak memory stays bounded to one tile for both editions; Bedrock flushes encoded SubChunks to a background LevelDB writer, Java lazily writes 32×32 region files as tiles drain |
 | **`anyhow` for errors** | Lightweight error handling; sufficient for a CLI tool without library consumers |
 
 ---

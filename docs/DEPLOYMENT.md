@@ -68,7 +68,7 @@ Avoid Option A outside an isolated local network — the API accepts up to 500 M
 | `RUST_API_URL` | `http://localhost:3002` | Next.js proxy routes (server-side) | Base URL the Next.js `/api/*` routes use to reach the Rust API. Override when the API runs on a different host/port. **Not** `NEXT_PUBLIC_`-prefixed — never inlined into the browser bundle, so it can be changed at runtime without a rebuild. |
 | `RUST_LOG` | `info` | Rust API | Log verbosity (`error`, `warn`, `info`, `debug`, `trace`). |
 | `OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | Rust API + CLI | Override the Overpass API endpoint (useful for mirrors). |
-| `OVERPASS_CACHE_DIR` | `~/.cache/osm-to-bedrock/overpass/` | Rust API + CLI | Override the disk cache directory. |
+| `OVERPASS_CACHE_DIR` | `~/.cache/par-osm-rust/overpass/` | Rust API + CLI | Override the disk cache directory. Resolution priority: `PAR_OSM_OVERPASS_CACHE_DIR` → `OVERPASS_CACHE_DIR` → shared default. Legacy `~/.cache/osm-to-bedrock/overpass/` entries are migrated into the shared default on startup. |
 | `API_PORT` | `3002` | `docker-entrypoint.sh` | Port the Rust API listens on inside the container. |
 | `PORT` | `8031` | `docker-entrypoint.sh` / Next.js | Port the Next.js standalone server listens on inside the container. |
 

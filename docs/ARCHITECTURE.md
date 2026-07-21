@@ -214,15 +214,16 @@ The pipeline is **edition-agnostic at the outer tile loop**: it constructs one p
 **How it works:**
 
 1. **Compute terrain bounds** — a fast pass over all OSM nodes to determine the block-coordinate bounding box
-2. **Java memory guard (ARC-001)** — refuse oversized `edition=java` conversions before any allocation if the estimated chunk count exceeds the ~1.5 GB in-memory budget
-3. **Pre-compute global HeightMap** — parallel computation of surface Y for every block column (elevation-aware when SRTM data is present)
-4. **Tile iteration** — the chunk bounding box is divided into tiles; each tile is processed independently:
+2. **Pre-compute global HeightMap** — parallel computation of surface Y for every block column (elevation-aware when SRTM data is present)
+3. **Tile iteration** — the chunk bounding box is divided into tiles; each tile is processed independently:
    - `set_tile_bounds` scopes writes to the tile's chunk rectangle
    - Allocate `ChunkData` for every chunk in the tile
    - Fill terrain layers (bedrock, stone, dirt, grass) using Rayon parallel iterators
    - Render OSM features that intersect the tile using spatially-filtered way indices
    - `flush_tile` drains the tile: Bedrock encodes its SubChunks and ships them to the background `ChunkWriter` thread, then clears the in-memory chunk map; Java drains the tile's chunks into 32×32 region buffers and lazily writes each `.mca` once the tile containing its max in-bounds chunk has flushed (ARC-001)
-5. **Background I/O** — `ChunkWriter` owns a dedicated thread that holds the LevelDB `DB` handle. Encoded SubChunk bytes flow over a bounded channel, pipelining CPU encoding with disk writes.
+4. **Background I/O (Bedrock)** — `ChunkWriter` owns a dedicated thread that holds the LevelDB `DB` handle. Encoded SubChunk bytes flow over a bounded channel, pipelining CPU encoding with disk writes. Java has no equivalent thread: its `flush_tile` writes region files inline once their last contributing tile has flushed.
+
+Both editions stream tile-by-tile, so no up-front memory guard is needed — peak RAM stays bounded to one tile's worth of `ChunkData` plus a small frontier of region buffers (Java).
 
 ```mermaid
 graph TD
@@ -305,7 +306,7 @@ The HTTP server lives in the `src/server/` module (split across `mod.rs`, `state
 - **Background jobs** — conversion jobs run in spawned Tokio tasks. Job state is tracked in `Arc<Mutex<HashMap<String, JobState>>>` (the `Jobs` type). A background eviction task periodically removes completed jobs past their TTL.
 - **Body limits** — per-route limits prevent abuse: 100 MB for parse, 500 MB for convert, 50 MB for preview, and 1 MiB for the JSON routes (`fetch-preview`, `fetch-block-preview`, `fetch-convert`, `terrain-convert`, `overture-convert`)
 - **Auth** — when `OSM_TO_BEDROCK_API_KEY` is set, every route except `/health` requires the matching key in the `Authorization` (or `X-API-Key`) header. `/health` stays public so liveness probes work without credentials.
-- **ChunkWriter I/O pipeline** — the server uses the same streaming tile architecture as the CLI, so large conversions do not spike memory
+- **Streaming tile pipeline** — the server uses the same streaming tile architecture as the CLI, so large conversions do not spike memory
 
 ### API Endpoints
 

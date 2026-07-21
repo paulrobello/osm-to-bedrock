@@ -386,7 +386,7 @@ make fmt          # rustfmt
 make typecheck    # cargo check
 make web-test     # Run web unit tests (vitest)
 make web-check    # Lint + unit-test + build-check the Next.js frontend
-make checkall     # fmt + lint + typecheck + test + web-check (run before committing)
+make checkall     # fmt + lint + typecheck + test + web-check + docs (run before committing)
 make clean        # cargo clean
 make install      # cargo install --path .
 make dev          # Start both Rust API (3002) + Web Explorer (8031)
