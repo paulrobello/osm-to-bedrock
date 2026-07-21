@@ -6,8 +6,8 @@
 
 use crate::blocks::{self, Block};
 use crate::convert::rasterize_line;
+use crate::osm::TagMap;
 use crate::world::WorldWriter;
-use std::collections::HashMap;
 
 // ── Bridge / tunnel geometry constants ────────────────────────────────────────
 pub const BRIDGE_HEIGHT: i32 = 4; // blocks above terrain for bridge deck
@@ -459,7 +459,7 @@ pub fn draw_building(
     pts: &[(i32, i32)],
     surface: i32,
     height: i32,
-    tags: &HashMap<String, String>,
+    tags: &TagMap,
     road_dir: Option<(f64, f64)>,
 ) {
     let wall = blocks::building_block(tags);
@@ -606,7 +606,7 @@ pub fn draw_roof(
     pts: &[(i32, i32)],
     surface: i32,
     height: i32,
-    tags: &HashMap<String, String>,
+    tags: &TagMap,
 ) {
     if pts.is_empty() {
         return;

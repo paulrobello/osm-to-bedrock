@@ -184,7 +184,7 @@ mod tests {
             },
         );
         let mut tags = HashMap::new();
-        tags.insert("highway".to_string(), "residential".to_string());
+        tags.insert("highway".into(), "residential".to_string());
         let way = OsmWay {
             id: 1,
             tags,
@@ -241,7 +241,7 @@ mod tests {
                 id: 0,
                 tags: tags
                     .into_iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .map(|(k, v)| (k.into(), v.to_string()))
                     .collect(),
                 node_refs: vec![],
             }
@@ -294,7 +294,7 @@ mod tests {
                 id: 0,
                 tags: tags
                     .into_iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .map(|(k, v)| (k.into(), v.to_string()))
                     .collect(),
                 node_refs: vec![],
             }

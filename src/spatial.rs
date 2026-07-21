@@ -135,7 +135,7 @@ impl SpatialIndex {
 
 /// A multipolygon relation with its rings resolved to block coordinates.
 pub struct ResolvedRelation<'a> {
-    pub tags: &'a HashMap<String, String>,
+    pub tags: &'a osm::TagMap,
     pub outers: Vec<Vec<(i32, i32)>>,
     pub inners: Vec<Vec<(i32, i32)>>,
 }

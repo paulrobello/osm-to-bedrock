@@ -1,6 +1,6 @@
 //! Block type definitions and OSM tag → Minecraft block mappings.
 
-use std::collections::HashMap;
+use crate::osm::TagMap;
 
 /// Minecraft blocks used in world generation, stored as u8 for memory efficiency.
 #[repr(u8)]
@@ -462,11 +462,7 @@ pub struct WaterwayStyle {
 ///
 /// OSM `width` and `depth` tags override type defaults when present and parseable.
 /// `scale` is metres-per-block (from `ConvertParams::scale`).
-pub fn waterway_to_style(
-    waterway_type: &str,
-    tags: &HashMap<String, String>,
-    scale: f64,
-) -> WaterwayStyle {
+pub fn waterway_to_style(waterway_type: &str, tags: &TagMap, scale: f64) -> WaterwayStyle {
     // Type-based defaults
     let (default_hw, default_depth) = match waterway_type {
         "river" => (3, 4),
@@ -493,7 +489,7 @@ pub fn waterway_to_style(
 }
 
 /// Choose a building wall block based on `building:material` tag.
-pub fn building_block(tags: &HashMap<String, String>) -> Block {
+pub fn building_block(tags: &TagMap) -> Block {
     match tags.get("building:material").map(|s| s.as_str()) {
         Some("brick") => Block::Brick,
         Some("wood") | Some("timber") => Block::OakPlanks,
@@ -508,25 +504,25 @@ pub fn building_block(tags: &HashMap<String, String>) -> Block {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use crate::osm::TagMap;
 
     #[test]
     fn building_block_brick() {
-        let mut tags = HashMap::new();
-        tags.insert("building:material".to_string(), "brick".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("building:material".into(), "brick".to_string());
         assert_eq!(building_block(&tags), Block::Brick);
     }
 
     #[test]
     fn building_block_default() {
-        let tags = HashMap::new();
+        let tags = TagMap::new();
         assert_eq!(building_block(&tags), Block::StoneBrick);
     }
 
     #[test]
     fn building_block_wood() {
-        let mut tags = HashMap::new();
-        tags.insert("building:material".to_string(), "wood".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("building:material".into(), "wood".to_string());
         assert_eq!(building_block(&tags), Block::OakPlanks);
     }
 
@@ -570,7 +566,7 @@ mod tests {
 
     #[test]
     fn waterway_style_river() {
-        let tags = HashMap::new();
+        let tags = TagMap::new();
         let style = waterway_to_style("river", &tags, 1.0);
         assert_eq!(style.half_width, 3);
         assert_eq!(style.depth, 4);
@@ -578,7 +574,7 @@ mod tests {
 
     #[test]
     fn waterway_style_canal() {
-        let tags = HashMap::new();
+        let tags = TagMap::new();
         let style = waterway_to_style("canal", &tags, 1.0);
         assert_eq!(style.half_width, 2);
         assert_eq!(style.depth, 3);
@@ -586,7 +582,7 @@ mod tests {
 
     #[test]
     fn waterway_style_stream() {
-        let tags = HashMap::new();
+        let tags = TagMap::new();
         let style = waterway_to_style("stream", &tags, 1.0);
         assert_eq!(style.half_width, 1);
         assert_eq!(style.depth, 2);
@@ -594,7 +590,7 @@ mod tests {
 
     #[test]
     fn waterway_style_ditch() {
-        let tags = HashMap::new();
+        let tags = TagMap::new();
         let style = waterway_to_style("ditch", &tags, 1.0);
         assert_eq!(style.half_width, 0);
         assert_eq!(style.depth, 1);
@@ -602,7 +598,7 @@ mod tests {
 
     #[test]
     fn waterway_style_drain() {
-        let tags = HashMap::new();
+        let tags = TagMap::new();
         let style = waterway_to_style("drain", &tags, 1.0);
         assert_eq!(style.half_width, 0);
         assert_eq!(style.depth, 1);
@@ -610,7 +606,7 @@ mod tests {
 
     #[test]
     fn waterway_style_default_fallback() {
-        let tags = HashMap::new();
+        let tags = TagMap::new();
         let style = waterway_to_style("unknown_type", &tags, 1.0);
         assert_eq!(style.half_width, 1);
         assert_eq!(style.depth, 2);
@@ -618,25 +614,25 @@ mod tests {
 
     #[test]
     fn waterway_style_width_tag_override() {
-        let mut tags = HashMap::new();
-        tags.insert("width".to_string(), "10.0".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("width".into(), "10.0".to_string());
         let style = waterway_to_style("stream", &tags, 1.0);
         assert_eq!(style.half_width, 5);
     }
 
     #[test]
     fn waterway_style_depth_tag_override() {
-        let mut tags = HashMap::new();
-        tags.insert("depth".to_string(), "6.0".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("depth".into(), "6.0".to_string());
         let style = waterway_to_style("stream", &tags, 1.0);
         assert_eq!(style.depth, 6);
     }
 
     #[test]
     fn waterway_style_non_numeric_tags_ignored() {
-        let mut tags = HashMap::new();
-        tags.insert("width".to_string(), "narrow".to_string());
-        tags.insert("depth".to_string(), "shallow".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("width".into(), "narrow".to_string());
+        tags.insert("depth".into(), "shallow".to_string());
         let style = waterway_to_style("river", &tags, 1.0);
         assert_eq!(style.half_width, 3);
         assert_eq!(style.depth, 4);
@@ -644,40 +640,40 @@ mod tests {
 
     #[test]
     fn waterway_style_width_clamped() {
-        let mut tags = HashMap::new();
-        tags.insert("width".to_string(), "200.0".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("width".into(), "200.0".to_string());
         let style = waterway_to_style("river", &tags, 1.0);
         assert_eq!(style.half_width, 8);
     }
 
     #[test]
     fn waterway_style_depth_clamped_min() {
-        let mut tags = HashMap::new();
-        tags.insert("depth".to_string(), "0.0".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("depth".into(), "0.0".to_string());
         let style = waterway_to_style("river", &tags, 1.0);
         assert_eq!(style.depth, 1);
     }
 
     #[test]
     fn waterway_style_scale_applied() {
-        let mut tags = HashMap::new();
-        tags.insert("width".to_string(), "4.0".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("width".into(), "4.0".to_string());
         let style = waterway_to_style("stream", &tags, 2.0);
         assert_eq!(style.half_width, 1);
     }
 
     #[test]
     fn waterway_style_depth_clamped_max() {
-        let mut tags = HashMap::new();
-        tags.insert("depth".to_string(), "100.0".to_string()); // far above max → clamped to 6
+        let mut tags = TagMap::new();
+        tags.insert("depth".into(), "100.0".to_string()); // far above max → clamped to 6
         let style = waterway_to_style("stream", &tags, 1.0);
         assert_eq!(style.depth, 6);
     }
 
     #[test]
     fn waterway_style_scale_applied_to_depth() {
-        let mut tags = HashMap::new();
-        tags.insert("depth".to_string(), "4.0".to_string()); // 4m at scale 2.0 → 2 blocks deep
+        let mut tags = TagMap::new();
+        tags.insert("depth".into(), "4.0".to_string()); // 4m at scale 2.0 → 2 blocks deep
         let style = waterway_to_style("stream", &tags, 2.0);
         assert_eq!(style.depth, 2);
     }

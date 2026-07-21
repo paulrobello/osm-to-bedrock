@@ -10,9 +10,8 @@
 
 use geojson::{Feature, FeatureCollection, GeoJson, Geometry, GeometryValue};
 use serde_json::{Map, Value as JsonValue};
-use std::collections::HashMap;
 
-use crate::osm::OsmData;
+use crate::osm::{OsmData, TagMap};
 
 // ── Classification ──────────────────────────────────────────────────────────
 
@@ -26,7 +25,7 @@ use crate::osm::OsmData;
 /// 5. `barrier` → "barrier"
 /// 6. `landuse` or `natural` (any other value) → "landuse"
 /// 7. Everything else → "other"
-fn classify_way(tags: &HashMap<String, String>) -> &'static str {
+fn classify_way(tags: &TagMap) -> &'static str {
     if tags.contains_key("highway") {
         return "road";
     }
@@ -112,7 +111,7 @@ pub fn to_geojson(data: &OsmData) -> FeatureCollection {
             let mut props: Map<String, JsonValue> = way
                 .tags
                 .iter()
-                .map(|(k, v)| (k.clone(), JsonValue::String(v.clone())))
+                .map(|(k, v)| (k.to_string(), JsonValue::String(v.clone())))
                 .collect();
             props.insert("_type".to_string(), JsonValue::String(way_type.to_string()));
             props.insert(
@@ -189,7 +188,7 @@ pub fn to_geojson(data: &OsmData) -> FeatureCollection {
         let mut props: Map<String, JsonValue> = rel
             .tags
             .iter()
-            .map(|(k, v)| (k.clone(), JsonValue::String(v.clone())))
+            .map(|(k, v)| (k.to_string(), JsonValue::String(v.clone())))
             .collect();
         props.insert("_type".to_string(), JsonValue::String(way_type.to_string()));
         props.insert(
@@ -242,86 +241,86 @@ mod tests {
 
     #[test]
     fn classify_highway() {
-        let mut tags = HashMap::new();
-        tags.insert("highway".to_string(), "residential".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("highway".into(), "residential".to_string());
         assert_eq!(classify_way(&tags), "road");
     }
 
     #[test]
     fn classify_building() {
-        let mut tags = HashMap::new();
-        tags.insert("building".to_string(), "yes".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("building".into(), "yes".to_string());
         assert_eq!(classify_way(&tags), "building");
     }
 
     #[test]
     fn classify_building_part() {
-        let mut tags = HashMap::new();
-        tags.insert("building:part".to_string(), "yes".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("building:part".into(), "yes".to_string());
         assert_eq!(classify_way(&tags), "building");
     }
 
     #[test]
     fn classify_waterway() {
-        let mut tags = HashMap::new();
-        tags.insert("waterway".to_string(), "river".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("waterway".into(), "river".to_string());
         assert_eq!(classify_way(&tags), "water");
     }
 
     #[test]
     fn classify_natural_water() {
-        let mut tags = HashMap::new();
-        tags.insert("natural".to_string(), "water".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("natural".into(), "water".to_string());
         assert_eq!(classify_way(&tags), "water");
     }
 
     #[test]
     fn classify_landuse_reservoir() {
-        let mut tags = HashMap::new();
-        tags.insert("landuse".to_string(), "reservoir".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("landuse".into(), "reservoir".to_string());
         assert_eq!(classify_way(&tags), "water");
     }
 
     #[test]
     fn classify_landuse_generic() {
-        let mut tags = HashMap::new();
-        tags.insert("landuse".to_string(), "forest".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("landuse".into(), "forest".to_string());
         assert_eq!(classify_way(&tags), "landuse");
     }
 
     #[test]
     fn classify_natural_generic() {
-        let mut tags = HashMap::new();
-        tags.insert("natural".to_string(), "wood".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("natural".into(), "wood".to_string());
         assert_eq!(classify_way(&tags), "landuse");
     }
 
     #[test]
     fn classify_railway() {
-        let mut tags = HashMap::new();
-        tags.insert("railway".to_string(), "rail".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("railway".into(), "rail".to_string());
         assert_eq!(classify_way(&tags), "railway");
     }
 
     #[test]
     fn classify_barrier() {
-        let mut tags = HashMap::new();
-        tags.insert("barrier".to_string(), "fence".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("barrier".into(), "fence".to_string());
         assert_eq!(classify_way(&tags), "barrier");
     }
 
     #[test]
     fn classify_other() {
-        let tags = HashMap::new();
+        let tags = TagMap::new();
         assert_eq!(classify_way(&tags), "other");
     }
 
     /// highway takes priority over building when both tags are present.
     #[test]
     fn classify_priority_highway_over_building() {
-        let mut tags = HashMap::new();
-        tags.insert("highway".to_string(), "footway".to_string());
-        tags.insert("building".to_string(), "yes".to_string());
+        let mut tags = TagMap::new();
+        tags.insert("highway".into(), "footway".to_string());
+        tags.insert("building".into(), "yes".to_string());
         assert_eq!(classify_way(&tags), "road");
     }
 
@@ -333,8 +332,8 @@ mod tests {
         let way = OsmWay {
             id: 1,
             tags: {
-                let mut t = HashMap::new();
-                t.insert("highway".to_string(), "path".to_string());
+                let mut t = TagMap::new();
+                t.insert("highway".into(), "path".to_string());
                 t
             },
             node_refs: vec![1, 2],
@@ -353,8 +352,8 @@ mod tests {
         let way = OsmWay {
             id: 1,
             tags: {
-                let mut t = HashMap::new();
-                t.insert("building".to_string(), "yes".to_string());
+                let mut t = TagMap::new();
+                t.insert("building".into(), "yes".to_string());
                 t
             },
             node_refs: vec![1, 2, 3, 4, 1],
@@ -379,7 +378,7 @@ mod tests {
     fn way_with_missing_nodes_is_skipped() {
         let way = OsmWay {
             id: 1,
-            tags: HashMap::new(),
+            tags: TagMap::new(),
             node_refs: vec![99], // node 99 doesn't exist
         };
         let data = make_data(vec![way], vec![]);
@@ -393,9 +392,9 @@ mod tests {
         let way = OsmWay {
             id: 1,
             tags: {
-                let mut t = HashMap::new();
-                t.insert("highway".to_string(), "primary".to_string());
-                t.insert("name".to_string(), "Main St".to_string());
+                let mut t = TagMap::new();
+                t.insert("highway".into(), "primary".to_string());
+                t.insert("name".into(), "Main St".to_string());
                 t
             },
             node_refs: vec![1, 2],
@@ -414,7 +413,7 @@ mod tests {
     fn coordinates_are_lon_lat_order() {
         let way = OsmWay {
             id: 1,
-            tags: HashMap::new(),
+            tags: TagMap::new(),
             node_refs: vec![1, 2],
         };
         // lat=10.0, lon=20.0 → GeoJSON position should be [20.0, 10.0]
@@ -442,7 +441,7 @@ mod tests {
     fn polygon_ring_is_closed() {
         let way = OsmWay {
             id: 1,
-            tags: HashMap::new(),
+            tags: TagMap::new(),
             node_refs: vec![1, 2, 3, 4, 1],
         };
         let data = make_data(

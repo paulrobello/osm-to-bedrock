@@ -222,7 +222,7 @@ fn mk_node(id: i64, dlat: f64, dlon: f64) -> (i64, OsmNode) {
 fn mk_tagged_way(id: i64, tags: &[(&str, &str)], node_refs: &[i64]) -> OsmWay {
     let mut t = HashMap::new();
     for (k, v) in tags {
-        t.insert((*k).to_string(), (*v).to_string());
+        t.insert((*k).into(), (*v).to_string());
     }
     OsmWay {
         id,

@@ -6,7 +6,7 @@
 //! are `pub(super)` so they remain invisible outside the [`crate::pipeline`]
 //! module.
 
-use std::collections::HashMap;
+use crate::osm::TagMap;
 
 use crate::blocks::Block;
 use crate::world::WorldWriter;
@@ -18,7 +18,7 @@ use super::util::coord_hash;
 /// Tries standard OSM keys first (`amenity`, `shop`, `tourism`, `leisure`,
 /// `historic`), then falls back to any non-metadata tag value that could serve
 /// as a meaningful label.
-pub(super) fn resolve_poi_type(tags: &HashMap<String, String>) -> &str {
+pub(super) fn resolve_poi_type(tags: &TagMap) -> &str {
     // Standard OSM POI keys
     const POI_KEYS: &[&str] = &["amenity", "shop", "tourism", "leisure", "historic"];
     for key in POI_KEYS {
@@ -45,7 +45,8 @@ pub(super) fn resolve_poi_type(tags: &HashMap<String, String>) -> &str {
         "barrier",
     ];
     for (k, v) in tags {
-        if !SKIP_KEYS.contains(&k.as_str()) && !v.is_empty() {
+        let key: &str = k;
+        if !SKIP_KEYS.contains(&key) && !v.is_empty() {
             return v.as_str();
         }
     }
