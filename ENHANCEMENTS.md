@@ -65,6 +65,8 @@ Build release binaries for all platforms on git tag push. Publish `.mcworld` sam
 ### Dependency Updates
 Set up Dependabot or Renovate for automated Cargo and npm dependency PRs.
 
+**Done:** `.github/dependabot.yml` (v2 config) opens weekly update PRs across three ecosystems: `cargo` (root `/`), `npm` (`/web`), and `github-actions` (keeps the `uses:` refs in `.github/workflows/*.yml` current). Cargo and npm minor+patch updates are grouped into one PR per ecosystem so majors stay isolated for individual review; action updates arrive one-per-PR. Conventional commit prefixes (`chore(deps)`, `chore(deps-web)`, `chore(ci)`) and `dependencies` + ecosystem labels (`rust`/`npm`/`ci`) are applied — the labels must exist on the repo for Dependabot to attach them.
+
 ### Binary Size Optimization
 Profile and reduce release binary size with `strip`, LTO, and `opt-level=z`. The converter should be easy to distribute.
 
