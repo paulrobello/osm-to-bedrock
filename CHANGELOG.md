@@ -7,12 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **`par-osm-rust` bumped `=0.3.0` → `=0.5.0`.** 0.5.0 ships one breaking change (ENH-008): every `tags` field is now `TagMap = HashMap<Arc<str>, String>` with interned keys. Reads stay source-compatible (`Arc<str>: Borrow<str>`); only explicit types and tag-key construction change. The seven `&HashMap<String, String>` tag annotations moved to `&TagMap` (`ResolvedRelation`, `classify_way`, `draw_building`/`draw_roof`, `waterway_to_style`/`building_block`, `resolve_poi_type`), the GeoJSON tag→properties map switched `k.clone()` → `k.to_string()` (`Arc<str>` has no stable `as_str`), `resolve_poi_type`'s `&k.as_str()` became a `let key: &str = k;` deref binding, and every tag-key construction site went `"key".to_string()` → `"key".into()`. The seven re-export shims are unchanged. 0.3.1 (additive `tagged_nodes`) and 0.4.0 (ENH-003 reclassifies standalone `man_made`/`natural` nodes into `poi_nodes`) needed no migration — no test asserts the affected POI counts, so the full suite passes unchanged.
+_Nothing yet._
 
 ---
 
-## [0.9.0] — 2026-07-18
+## [0.9.0] — 2026-07-21
 
 _Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 54 of 58 audit issues resolved (ARC-001 streaming Java writer + ARC-010 DashMap landed after the initial run)._
 
@@ -33,6 +32,8 @@ _Audit remediation — see `AUDIT-REMEDIATION.md` for the full breakdown. 54 of 
 - `AbortController` cleanup in `useConversion` so polling stops on unmount.
 
 ### Changed
+- **`par-osm-rust` bumped `=0.3.0` → `=0.5.0`.** 0.5.0 ships one breaking change (ENH-008): every `tags` field is now `TagMap = HashMap<Arc<str>, String>` with interned keys. Reads stay source-compatible (`Arc<str>: Borrow<str>`); only explicit types and tag-key construction change. The seven `&HashMap<String, String>` tag annotations moved to `&TagMap` (`ResolvedRelation`, `classify_way`, `draw_building`/`draw_roof`, `waterway_to_style`/`building_block`, `resolve_poi_type`), the GeoJSON tag→properties map switched `k.clone()` → `k.to_string()` (`Arc<str>` has no stable `as_str`), `resolve_poi_type`'s `&k.as_str()` became a `let key: &str = k;` deref binding, and every tag-key construction site went `"key".to_string()` → `"key".into()`. The seven re-export shims are unchanged. 0.3.1 (additive `tagged_nodes`) and 0.4.0 (ENH-003 reclassifies standalone `man_made`/`natural` nodes into `poi_nodes`) needed no migration — no test asserts the affected POI counts, so the full suite passes unchanged.
+- **Documentation synced to current implementation.** `docs/` + `README.md` reconciled with the code: corrected the Overpass cache default to the shared `~/.cache/par-osm-rust/overpass/` root (with legacy migration), removed stale `enforce_java_memory_budget` / "Java accumulates in memory" claims (streaming landed, ARC-001), refreshed `DEVELOPER_INFO.md` (TagMap types, real struct fields, streaming tile pipeline, mermaid diagrams, missing CLI flags), dropped removed `--overture-priority` / theme-priority references, and fixed the `make checkall` summary (`+ docs`).
 - **Streaming Java Edition writer (ARC-001)** — `edition=java` conversions now stream tile-by-tile like Bedrock instead of accumulating the whole world in RAM. `JavaWorld::new_streaming` scopes its scratch store to the current tile and lazily writes 32×32 Anvil region files as tiles flush, so peak memory ≈ one tile + a small frontier of region buffers. The previous `enforce_java_memory_budget` OOM guard is retired (both editions now match Bedrock's per-tile profile, which never needed a guard).
 - **DashMap job state (ARC-010)** — the API server's job map is now `Arc<DashMap<String, JobState>>` instead of `Arc<Mutex<HashMap<…>>>`, so the read-heavy `/status` + `/download` polling path no longer contends with worker progress writes. The `lock_jobs` mutex-poisoning helper is removed (DashMap shard locks never poison — SEC-006 recovery is now structural).
 - Deduped the Bedrock/Java tile loop via a `process_tile` helper + `WorldWriter::flush_tile()`; the outer loop is now edition-agnostic.
