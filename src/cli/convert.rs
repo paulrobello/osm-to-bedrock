@@ -21,6 +21,8 @@ use crate::{overture, srtm};
 
 /// `convert` — convert an OSM PBF file on disk into a Minecraft world.
 pub fn run_convert(args: &ConvertArgs, config: &Config) -> Result<()> {
+    let block_overrides =
+        crate::block_mapping::load_block_overrides_arg(&args.building.block_mapping)?;
     let convert_params = ConvertParams {
         input: Some(args.input.clone()),
         output: args.output.clone(),
@@ -60,7 +62,7 @@ pub fn run_convert(args: &ConvertArgs, config: &Config) -> Result<()> {
             .surface_thickness
             .or(config.surface_thickness)
             .unwrap_or(4),
-        block_overrides: None,
+        block_overrides,
     };
 
     run_conversion(&convert_params, &log_progress)?;
@@ -205,6 +207,8 @@ pub fn run_fetch_convert(args: &FetchConvertArgs, config: &Config) -> Result<()>
     let output = args.output.join(&args.world_name);
     std::fs::create_dir_all(&output)?;
 
+    let block_overrides =
+        crate::block_mapping::load_block_overrides_arg(&args.building.block_mapping)?;
     let convert_params = ConvertParams {
         input: None,
         output,
@@ -244,7 +248,7 @@ pub fn run_fetch_convert(args: &FetchConvertArgs, config: &Config) -> Result<()>
             .surface_thickness
             .or(config.surface_thickness)
             .unwrap_or(4),
-        block_overrides: None,
+        block_overrides,
     };
 
     run_conversion_from_data(data, &convert_params, &print_progress)?;
@@ -275,6 +279,8 @@ pub fn run_overture_convert(args: &OvertureConvertArgs, config: &Config) -> Resu
     let output = args.output.join(&args.world_name);
     std::fs::create_dir_all(&output)?;
 
+    let block_overrides =
+        crate::block_mapping::load_block_overrides_arg(&args.building.block_mapping)?;
     let convert_params = ConvertParams {
         input: None,
         output,
@@ -314,7 +320,7 @@ pub fn run_overture_convert(args: &OvertureConvertArgs, config: &Config) -> Resu
             .surface_thickness
             .or(config.surface_thickness)
             .unwrap_or(4),
-        block_overrides: None,
+        block_overrides,
     };
 
     run_conversion_from_data(data, &convert_params, &print_progress)?;

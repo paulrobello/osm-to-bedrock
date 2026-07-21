@@ -141,6 +141,33 @@ mod tests {
     }
 
     #[test]
+    fn block_mapping_flag_parses() {
+        use crate::cli::args::{Cli, Commands};
+        use clap::Parser;
+
+        let cli = Cli::try_parse_from([
+            "osm-to-bedrock",
+            "convert",
+            "-i",
+            "map.osm.pbf",
+            "-o",
+            "World",
+            "--block-mapping",
+            "blocks.yaml",
+        ])
+        .expect("flag should parse");
+        match cli.command {
+            Commands::Convert(args) => {
+                assert_eq!(
+                    args.building.block_mapping,
+                    Some(std::path::PathBuf::from("blocks.yaml"))
+                );
+            }
+            _ => panic!("expected Convert subcommand"),
+        }
+    }
+
+    #[test]
     fn parse_bbox_valid() {
         let (s, w, n, e) = parse_bbox("51.5,-0.13,51.52,-0.10").unwrap();
         assert!((s - 51.5).abs() < 0.001);

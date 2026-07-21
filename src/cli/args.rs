@@ -108,6 +108,11 @@ pub struct BuildingArgs {
     /// Place POI markers (signs) at amenities, shops, and tourism nodes
     #[arg(long, default_value = "false")]
     pub poi_markers: bool,
+
+    /// Path to a YAML file overriding default OSM tag → block mappings
+    /// (keys: building, highway, landuse, natural; values: Block variant names).
+    #[arg(long, value_name = "PATH")]
+    pub block_mapping: Option<PathBuf>,
 }
 
 // ── Per-subcommand args ────────────────────────────────────────────────────
