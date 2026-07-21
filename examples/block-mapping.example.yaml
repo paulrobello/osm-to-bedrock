@@ -1,0 +1,28 @@
+# Custom block mappings for osm-to-bedrock.
+# Usage: osm-to-bedrock convert -i map.osm.pbf -o World/ --block-mapping block-mapping.yaml
+#
+# Each top-level key is a mapping surface. Each entry maps an OSM tag VALUE to
+# a target block, named by its exact PascalCase Block variant (e.g. OakLog,
+# PolishedBlackstoneSlab). Entries override the built-in default for that value;
+# you may also add values that currently fall through to the default.
+
+# building:material value -> wall block
+building:
+  brick: OakPlanks
+  glass: GlassPane
+  concrete: WhiteConcrete
+
+# highway value -> road SURFACE block (width/sidewalk/flags stay at the default for that class)
+highway:
+  motorway: SmoothStoneSlab
+  residential: Cobblestone
+
+# landuse value -> ground surface block
+landuse:
+  farmland: Dirt
+  forest: BirchLog
+
+# natural value -> ground surface block
+natural:
+  wood: OakLog
+  bare_rock: Stone

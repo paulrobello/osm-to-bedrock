@@ -104,6 +104,7 @@ This is a Rust CLI that converts OpenStreetMap `.osm.pbf` files into playable Mi
 | `src/spatial.rs` | `SpatialIndex` (type-bucketed + grid-indexed way lookup), `HeightMap`, `TILE_CHUNKS` constant. |
 | `src/sign.rs` | Street-name sign formatting, nearest-road-vector calculation, sign direction. |
 | `src/blocks.rs` | `Block` enum (56 variants, grouped by section comment), OSM tag-to-block mapping, `RoadStyle`, `WaterwayStyle`. |
+| `src/block_mapping.rs` | Loads user-supplied OSM tag → Block overrides from a YAML file (`--block-mapping`); `BlockOverrides` itself is defined in `blocks.rs`. |
 | `src/world.rs` | `WorldWriter` trait (`flush_tile`/`set_tile_bounds`/`save`), `Edition` enum + `create_world`/`create_world_bounded` factory methods, `ChunkData`, shared `ChunkStore` (QA-001) backing both backends. |
 | `src/bedrock.rs` | `BedrockWorld` (LevelDB + SubChunk v8) with background `ChunkWriter` thread; `new_streaming` streams tile-by-tile. |
 | `src/anvil.rs` | `JavaWorld` (Anvil `.mca` region files + gzip `level.dat` + `session.lock`). Two constructors: in-memory `new`/`new_bounded` (public library API) and `new_streaming`, which the tile pipeline uses — `flush_tile` drains the tile's chunks into 32×32 region buffers and lazily writes each `.mca` once the tile containing its max in-bounds chunk has flushed, bounding peak memory to ~one tile (matching Bedrock). |
@@ -135,3 +136,4 @@ This is a Rust CLI that converts OpenStreetMap `.osm.pbf` files into playable Mi
 - `run_conversion` / `run_conversion_from_data` accept a `progress_cb: &dyn Fn(f32, &str)` callback for progress reporting (used by both CLI and server)
 - Overpass cache key is SHA-256 of bbox (snapped to 4 dp) + filter; containment lookup reuses a larger cached area rather than re-fetching
 - `OVERPASS_URL` env var overrides the default Overpass endpoint (useful for mirrors when `overpass-api.de` is busy)
+- Custom block mappings: a `--block-mapping <path>` YAML file overrides the default OSM tag → Block mappings (building material, road surface, landuse, natural). Targets are the 56 built-in `Block` variants (by exact PascalCase name); overrides merge over defaults.

@@ -192,6 +192,36 @@ make convert INPUT=city.osm.pbf OUTPUT=~/games/worlds/MyCity
 
 Key options: `--scale`, `--sea-level`, `--building-height`, `--signs`, `--address-signs`, `--poi-markers`, `--elevation`, `--vertical-scale`, `--elevation-smoothing`, `--spawn-lat/lon`, `--edition`, `--watch`
 
+### Custom block mappings
+
+Override the default OSM tag → block mappings with a YAML file to customize how
+your world looks. Pass it with `--block-mapping`:
+
+```bash
+osm-to-bedrock convert -i map.osm.pbf -o World/ --block-mapping block-mapping.yaml
+```
+
+The file maps an OSM tag **value** to a target block, named by its exact PascalCase
+`Block` variant (e.g. `OakLog`, `PolishedBlackstoneSlab`). See
+[`examples/block-mapping.example.yaml`](examples/block-mapping.example.yaml) for a
+full sample. Entries override the built-in default for that tag value; you may
+also add mappings for values that currently fall through to the default.
+
+```yaml
+building:        # building:material value
+  brick: OakPlanks
+highway:         # highway value -> road surface block
+  residential: Cobblestone
+landuse:         # landuse value
+  farmland: Dirt
+natural:         # natural value
+  wood: OakLog
+```
+
+Only the four block-returning surfaces are overridable: `building`, `highway`
+(surface block only), `landuse`, and `natural`. Targets must be one of the
+built-in `Block` variants; an unknown name errors at startup with the valid names.
+
 ### fetch-convert
 
 Fetch OSM data from Overpass for a bounding box and convert in one step. Results are cached on disk.
