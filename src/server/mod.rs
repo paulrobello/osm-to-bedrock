@@ -112,6 +112,15 @@ pub fn build_router() -> Router {
     build_router_with_state(state, None)
 }
 
+/// Build the Axum router with a fresh state and an optional shared-secret API
+/// key — the keyed counterpart to [`build_router`], for tests/embeddings that
+/// need to exercise the authenticated path end-to-end (SEC-001).
+#[allow(dead_code)] // public API: test helper + library entry for the keyed router
+pub fn build_router_with_key(api_key: Option<String>) -> Router {
+    let (state, _) = build_state();
+    build_router_with_state(state, api_key)
+}
+
 /// Build the Axum router from an existing [`AppState`] and an optional
 /// shared-secret API key.
 ///

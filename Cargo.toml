@@ -43,3 +43,7 @@ sha2 = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
 serde_yaml_ng = "0.10"
 notify = "8"
+
+[dev-dependencies]
+# `ServiceExt::oneshot` drives the real Axum router in `tests/server_api.rs`.
+tower = { version = "0.5", features = ["util"] }

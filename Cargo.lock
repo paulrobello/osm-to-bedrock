@@ -1643,6 +1643,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "tower",
  "tower-http",
  "urlencoding",
  "uuid",
