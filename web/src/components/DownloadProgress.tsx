@@ -12,10 +12,29 @@ import { formatBytes } from '@/lib/geo';
 
 type ConversionState = 'idle' | 'uploading' | 'converting' | 'done' | 'error';
 
+export function formatEta(totalSeconds: number): string {
+  const s = Math.round(totalSeconds);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return rem === 0 ? `${m}m` : `${m}m ${String(rem).padStart(2, '0')}s`;
+  }
+  const h = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  return mm === 0 ? `${h}h` : `${h}h ${String(mm).padStart(2, '0')}m`;
+}
+
+export function formatRate(r: number): string {
+  return `${r.toFixed(1)} tiles/s`;
+}
+
 interface DownloadProgressProps {
   conversionState: ConversionState;
   progress: number;
   message: string;
+  etaSeconds: number | null;
+  rate: number | null;
   downloadUrl: string | null;
   downloadFilename: string | null;
   error: string | null;
@@ -29,6 +48,8 @@ export function DownloadProgress({
   conversionState,
   progress,
   message,
+  etaSeconds,
+  rate,
   downloadUrl,
   downloadFilename,
   error,
@@ -64,6 +85,15 @@ export function DownloadProgress({
               style={{ color: 'var(--accent-gold)', fontFamily: "'JetBrains Mono', monospace" }}
             >
               {progressValue}%
+              {etaSeconds != null && (
+                <span
+                  className="ml-2"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  ~{formatEta(etaSeconds)} left
+                  {rate != null && ` · ${formatRate(rate)}`}
+                </span>
+              )}
             </p>
           </div>
         </div>

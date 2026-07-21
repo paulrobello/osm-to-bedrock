@@ -70,6 +70,8 @@ export interface JobStatus {
   state: string;
   progress: number;
   message: string;
+  eta_seconds?: number;
+  rate?: number;
 }
 
 /**

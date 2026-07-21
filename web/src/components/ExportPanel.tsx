@@ -90,6 +90,8 @@ export function ExportPanel({
     conversionState,
     progress,
     message,
+    etaSeconds,
+    rate,
     downloadUrl,
     error,
     downloadProgress,
@@ -284,6 +286,8 @@ export function ExportPanel({
         conversionState={conversionState}
         progress={progress}
         message={message}
+        etaSeconds={etaSeconds}
+        rate={rate}
         downloadUrl={downloadUrl}
         downloadFilename={downloadFilename}
         error={error}

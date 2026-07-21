@@ -51,6 +51,8 @@ export interface UseConversionReturn {
   progress: number;
   status: string;
   message: string;
+  etaSeconds: number | null;
+  rate: number | null;
   downloadUrl: string | null;
   error: string | null;
   downloadProgress: number;
@@ -95,6 +97,8 @@ export function useConversion(): UseConversionReturn {
   const [progress, setProgress] = useState<number>(0);
   const [status, setStatus] = useState<string>('');
   const [message, setMessage] = useState<string>('');
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+  const [rate, setRate] = useState<number | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
@@ -122,6 +126,8 @@ export function useConversion(): UseConversionReturn {
     setProgress(0);
     setStatus('');
     setMessage('');
+    setEtaSeconds(null);
+    setRate(null);
     setDownloadUrl(null);
     setError(null);
     setDownloadProgress(0);
@@ -203,11 +209,15 @@ export function useConversion(): UseConversionReturn {
             state: string;
             progress: number;
             message: string;
+            eta_seconds?: number;
+            rate?: number;
           };
 
           setProgress(data.progress ?? 0);
           setMessage(data.message ?? '');
           setStatus(data.state ?? '');
+          setEtaSeconds(typeof data.eta_seconds === 'number' ? data.eta_seconds : null);
+          setRate(typeof data.rate === 'number' ? data.rate : null);
 
           if (data.state === 'done' || data.state === 'complete' || data.state === 'completed') {
             stopPolling();
@@ -268,6 +278,8 @@ export function useConversion(): UseConversionReturn {
       setDownloadProgress(0);
       setDownloadTotal(0);
       setIsDownloading(false);
+      setEtaSeconds(null);
+      setRate(null);
 
       try {
         const res = await fetch(url, {
@@ -486,6 +498,8 @@ export function useConversion(): UseConversionReturn {
     progress,
     status,
     message,
+    etaSeconds,
+    rate,
     downloadUrl,
     error,
     downloadProgress,
