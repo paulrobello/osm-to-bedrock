@@ -15,9 +15,13 @@ use crate::cli::parse_bbox;
 use crate::config::Config;
 use crate::filter;
 use crate::params::{ConvertParams, TerrainParams};
-use crate::pipeline::{run_conversion, run_conversion_from_data, run_terrain_only_to_disk};
+use crate::pipeline::{
+    ProgressReport, format_duration, format_rate, run_conversion, run_conversion_from_data,
+    run_terrain_only_to_disk,
+};
 use crate::source_options;
 use crate::{overture, srtm};
+use std::time::Duration;
 
 /// `convert` — convert an OSM PBF file on disk into a Minecraft world.
 pub fn run_convert(args: &ConvertArgs, config: &Config) -> Result<()> {
@@ -378,10 +382,28 @@ pub fn run_terrain_convert(args: &TerrainConvertArgs, config: &Config) -> Result
     run_terrain_only_to_disk(&terrain_params, &print_progress)
 }
 
-fn log_progress(_progress: f32, msg: &str) {
-    log::info!("[progress] {}", msg);
+fn log_progress(report: &ProgressReport) {
+    let mut msg = format!("[progress] {}", report.message);
+    if let Some(eta) = report.eta {
+        msg.push_str(&format!(
+            " (eta={}, rate={:.1} tiles/s)",
+            format_duration(eta),
+            report.rate.unwrap_or(0.0)
+        ));
+    }
+    log::info!("{msg}");
 }
 
-fn print_progress(progress: f32, msg: &str) {
-    println!("[{:3.0}%] {msg}", progress * 100.0);
+fn print_progress(report: &ProgressReport) {
+    let mut line = format!("[{:3.0}%] {}", report.progress * 100.0, report.message);
+    if let Some(eta) = report.eta {
+        line.push_str(&format!(" · ~ETA {}", format_duration(eta)));
+    }
+    if let Some(rate) = report.rate {
+        line.push_str(&format!(" · {}", format_rate(rate)));
+    }
+    if report.elapsed > Duration::ZERO {
+        line.push_str(&format!(" · {} elapsed", format_duration(report.elapsed)));
+    }
+    println!("{line}");
 }

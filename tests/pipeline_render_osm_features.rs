@@ -567,7 +567,8 @@ fn run_preview_from_data_returns_world_with_terrain_column() {
     let params = default_params(Edition::Bedrock);
 
     let (world, _spawn_x, _spawn_y, _spawn_z) =
-        pipeline::run_preview_from_data(data, &params, &|_, _| {}).expect("preview pipeline");
+        pipeline::run_preview_from_data(data, &params, &|_: &pipeline::ProgressReport| {})
+            .expect("preview pipeline");
 
     // Terrain fill must place a bedrock → stone → dirt → grass column at
     // every chunk column inside the bounds. Check a known column near origin.
@@ -657,7 +658,7 @@ fn run_preview_for_edition(edition: Edition) -> Box<dyn WorldWriter> {
     let data = synthetic_osm_data();
     let params = default_params(edition);
     let (world, _spawn_x, _spawn_y, _spawn_z) =
-        pipeline::run_preview_from_data(data, &params, &|_, _| {})
+        pipeline::run_preview_from_data(data, &params, &|_: &pipeline::ProgressReport| {})
             .unwrap_or_else(|e| panic!("preview pipeline for {edition:?} failed: {e:?}"));
     world
 }
@@ -758,7 +759,8 @@ fn bedrock_streaming_pipeline_writes_leveldb_subchunks_via_flush_tile() {
     let mut params = default_params(Edition::Bedrock);
     params.output = dir.path().to_path_buf();
 
-    pipeline::run_conversion_from_data(data, &params, &|_, _| {}).expect("Bedrock conversion");
+    pipeline::run_conversion_from_data(data, &params, &|_: &pipeline::ProgressReport| {})
+        .expect("Bedrock conversion");
 
     let db_dir = dir.path().join("db");
     assert!(
@@ -797,7 +799,8 @@ fn java_streaming_pipeline_writes_region_files_and_level_dat() {
     let mut params = default_params(Edition::Java);
     params.output = dir.path().to_path_buf();
 
-    pipeline::run_conversion_from_data(data, &params, &|_, _| {}).expect("Java conversion");
+    pipeline::run_conversion_from_data(data, &params, &|_: &pipeline::ProgressReport| {})
+        .expect("Java conversion");
 
     assert!(
         dir.path().join("level.dat").exists(),

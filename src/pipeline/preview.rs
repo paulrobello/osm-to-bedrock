@@ -45,12 +45,12 @@ use super::terrain::{
 /// so preview results include signs, POI markers, and barriers.
 pub fn run_conversion_preview(
     params: &ConvertParams,
-    progress_cb: &dyn Fn(f32, &str),
+    progress_cb: &dyn Fn(&super::ProgressReport),
 ) -> Result<(Box<dyn WorldWriter>, i32, i32, i32)> {
     if params.scale <= 0.0 {
         bail!("scale must be positive");
     }
-    progress_cb(0.0, "Parsing OSM data");
+    progress_cb(&super::ProgressReport::simple(0.0, "Parsing OSM data"));
     let path = params.input.as_deref().ok_or_else(|| {
         anyhow::anyhow!("ConvertParams.input is required for file-based conversion")
     })?;
@@ -69,7 +69,7 @@ pub fn run_conversion_preview(
 pub fn run_preview_from_data(
     data: osm::OsmData,
     params: &ConvertParams,
-    progress_cb: &dyn Fn(f32, &str),
+    progress_cb: &dyn Fn(&super::ProgressReport),
 ) -> Result<(Box<dyn WorldWriter>, i32, i32, i32)> {
     if data.ways().is_empty() {
         bail!("No ways found in OSM data.");
@@ -86,7 +86,7 @@ pub fn run_preview_from_data(
 pub fn run_surface_preview(
     data: osm::OsmData,
     params: &ConvertParams,
-    progress_cb: &dyn Fn(f32, &str),
+    progress_cb: &dyn Fn(&super::ProgressReport),
 ) -> Result<(Vec<(i32, i32, i32, String)>, i32, i32, i32)> {
     if data.ways().is_empty() {
         bail!("No ways found in OSM data.");
@@ -102,7 +102,7 @@ pub fn run_surface_preview(
     let conv = CoordConverter::new(origin_lat, origin_lon, params.scale);
     let elevation_data = load_elevation(params.elevation.as_deref(), params.vertical_scale);
 
-    progress_cb(0.10, "Computing bounds");
+    progress_cb(&super::ProgressReport::simple(0.10, "Computing bounds"));
     let (min_x, max_x, min_z, max_z) = compute_terrain_bounds(&data, &conv);
     let min_cx = min_x.div_euclid(16);
     let max_cx = max_x.div_euclid(16);
@@ -110,7 +110,7 @@ pub fn run_surface_preview(
     let max_cz = max_z.div_euclid(16);
 
     // Compute height map (parallel)
-    progress_cb(0.20, "Computing height map");
+    progress_cb(&super::ProgressReport::simple(0.20, "Computing height map"));
     let surface = params.sea_level;
     let height_map: HeightMap = {
         let all_cols: Vec<(i32, i32)> = (min_cx..=max_cx)
@@ -154,7 +154,7 @@ pub fn run_surface_preview(
     };
 
     // Resolve ways + build spatial index
-    progress_cb(0.40, "Classifying features");
+    progress_cb(&super::ProgressReport::simple(0.40, "Classifying features"));
     let resolved_ways = resolve_ways(&data, &conv);
     let spatial_index = SpatialIndex::build(&resolved_ways);
 
@@ -248,7 +248,10 @@ pub fn run_surface_preview(
         }
     }
 
-    progress_cb(0.80, "Building surface grid");
+    progress_cb(&super::ProgressReport::simple(
+        0.80,
+        "Building surface grid",
+    ));
 
     // Build the surface grid.  For large areas, sample grass blocks on a grid
     // while keeping ALL feature blocks at full resolution.
@@ -321,11 +324,14 @@ pub fn run_surface_preview(
         bx += stride;
     }
 
-    progress_cb(0.90, "Computing spawn");
+    progress_cb(&super::ProgressReport::simple(0.90, "Computing spawn"));
     let (spawn_x, spawn_y, spawn_z) =
         resolve_spawn(params, &conv, &height_map, min_cx, max_cx, min_cz, max_cz);
 
-    progress_cb(1.0, "Surface preview complete");
+    progress_cb(&super::ProgressReport::simple(
+        1.0,
+        "Surface preview complete",
+    ));
     Ok((result, spawn_x, spawn_y, spawn_z))
 }
 
@@ -339,7 +345,7 @@ pub fn run_surface_preview(
 fn run_pipeline(
     data: osm::OsmData,
     params: &ConvertParams,
-    progress_cb: &dyn Fn(f32, &str),
+    progress_cb: &dyn Fn(&super::ProgressReport),
 ) -> Result<(Box<dyn WorldWriter>, i32, i32, i32)> {
     let (origin_lat, origin_lon) = {
         let (min_lat, min_lon, max_lat, max_lon) = data
@@ -364,7 +370,10 @@ fn run_pipeline(
     let thickness = effective_thickness(params.surface_thickness, elevation_data.is_some());
 
     let (min_x, max_x, min_z, max_z) = compute_terrain_bounds(&data, &conv);
-    progress_cb(0.10, "Computing terrain bounds");
+    progress_cb(&super::ProgressReport::simple(
+        0.10,
+        "Computing terrain bounds",
+    ));
 
     log::info!(
         "Terrain bounds: x=[{}..{}] z=[{}..{}] ({} x {} blocks)",
@@ -391,7 +400,7 @@ fn run_pipeline(
     log::info!("Filling terrain for {} chunks...", terrain_chunks.len());
 
     // Pass 2: fill base terrain (parallel via rayon)
-    progress_cb(0.20, "Filling base terrain");
+    progress_cb(&super::ProgressReport::simple(0.20, "Filling base terrain"));
     let surface = params.sea_level;
     let mut height_map = HeightMap::new(surface);
     {
@@ -446,7 +455,10 @@ fn run_pipeline(
     }
 
     // Pass 3: overlay OSM features
-    progress_cb(0.40, "Processing OSM features");
+    progress_cb(&super::ProgressReport::simple(
+        0.40,
+        "Processing OSM features",
+    ));
     log::info!("Processing {} ways...", data.ways().len());
 
     let resolved_ways = resolve_ways(&data, &conv);
@@ -540,6 +552,6 @@ fn run_pipeline(
         resolve_spawn(params, &conv, &height_map, min_cx, max_cx, min_cz, max_cz);
     log::info!("Spawn point: ({}, {}, {})", spawn_x, spawn_y, spawn_z);
 
-    progress_cb(0.85, "Conversion complete");
+    progress_cb(&super::ProgressReport::simple(0.85, "Conversion complete"));
     Ok((world, spawn_x, spawn_y, spawn_z))
 }

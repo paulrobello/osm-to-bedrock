@@ -80,19 +80,28 @@ pub use render::{RenderContext, TileWays, render_osm_features};
 pub use terrain::{process_tile, run_terrain_only, run_terrain_only_to_disk};
 pub use util::{coord_hash, is_closed_way, zip_directory};
 
+/// Wall-clock closure used by [`ProgressTracker`] to measure elapsed time.
+/// Captures the instant of construction and returns the elapsed `Duration` on
+/// each call. `pub(crate)` so the terrain-only path can build a tracker with
+/// the same clock shape as the streaming pipeline.
+pub(crate) fn wall_clock() -> Box<dyn Fn() -> std::time::Duration + Send + Sync> {
+    let start = std::time::Instant::now();
+    Box::new(move || start.elapsed())
+}
+
 // ── Streaming dispatch + top-level entry points ───────────────────────────────
 
 /// Run the full OSM-to-Bedrock conversion pipeline.
 ///
 /// Uses the streaming (tile-based) pipeline so that only one
 /// `TILE_CHUNKS × TILE_CHUNKS` tile of chunk data lives in memory at a time.
-pub fn run_conversion(params: &ConvertParams, progress_cb: &dyn Fn(f32, &str)) -> Result<()> {
+pub fn run_conversion(params: &ConvertParams, progress_cb: &dyn Fn(&ProgressReport)) -> Result<()> {
     if params.scale <= 0.0 {
         bail!("scale must be positive");
     }
     let timer = crate::metadata::MetadataTimer::start();
 
-    progress_cb(0.0, "Parsing OSM data");
+    progress_cb(&ProgressReport::simple(0.0, "Parsing OSM data"));
     let path = params.input.as_deref().ok_or_else(|| {
         anyhow::anyhow!("ConvertParams.input is required for file-based conversion")
     })?;
@@ -115,7 +124,7 @@ pub fn run_conversion(params: &ConvertParams, progress_cb: &dyn Fn(f32, &str)) -
         log::warn!("Failed to write world_info.json: {e}");
     }
 
-    progress_cb(1.0, "Conversion complete");
+    progress_cb(&ProgressReport::simple(1.0, "Conversion complete"));
     log::info!(
         "Done! Open the '{}' folder in Minecraft Bedrock.",
         params.output.display()
@@ -167,14 +176,14 @@ pub fn run_conversion(params: &ConvertParams, progress_cb: &dyn Fn(f32, &str)) -
 ///     block_overrides: None,
 /// };
 ///
-/// run_conversion_from_data(data, &params, &|progress, msg| {
-///     println!("[{:3.0}%] {msg}", progress * 100.0);
+/// run_conversion_from_data(data, &params, &|report| {
+///     println!("[{:3.0}%] {}", report.progress * 100.0, report.message);
 /// }).expect("conversion failed");
 /// ```
 pub fn run_conversion_from_data(
     data: osm::OsmData,
     params: &ConvertParams,
-    progress_cb: &dyn Fn(f32, &str),
+    progress_cb: &dyn Fn(&ProgressReport),
 ) -> Result<()> {
     if data.ways().is_empty() {
         bail!("No ways found in OSM data.");
@@ -193,7 +202,7 @@ pub fn run_conversion_from_data(
         log::warn!("Failed to write world_info.json: {e}");
     }
 
-    progress_cb(1.0, "Conversion complete");
+    progress_cb(&ProgressReport::simple(1.0, "Conversion complete"));
     Ok(())
 }
 
@@ -208,7 +217,7 @@ pub fn run_conversion_from_data(
 pub(crate) fn run_pipeline_streaming(
     data: osm::OsmData,
     params: &ConvertParams,
-    progress_cb: &dyn Fn(f32, &str),
+    progress_cb: &dyn Fn(&ProgressReport),
 ) -> Result<(i32, i32, i32)> {
     // ── Determine origin ─────────────────────────────────────────────────────
     let (origin_lat, origin_lon) = {
@@ -224,8 +233,10 @@ pub(crate) fn run_pipeline_streaming(
     let surface_thickness =
         terrain::effective_thickness(params.surface_thickness, elevation_data.is_some());
 
+    let mut tracker = ProgressTracker::new(progress_cb, wall_clock());
+
     // Pass 1: compute terrain bounding box
-    progress_cb(0.10, "Computing terrain bounds");
+    tracker.phase(0.10, "Computing terrain bounds");
     let (min_x, max_x, min_z, max_z) = terrain::compute_terrain_bounds(&data, &conv);
 
     let min_cx = min_x.div_euclid(16);
@@ -253,7 +264,7 @@ pub(crate) fn run_pipeline_streaming(
     // worth of ChunkData plus a small frontier of region buffers.
 
     // Pass 2: pre-compute global HeightMap (parallel, no ChunkData)
-    progress_cb(0.20, "Computing height map");
+    tracker.phase(0.20, "Computing height map");
     let surface = params.sea_level;
     let mut height_map: HeightMap = {
         let all_cols: Vec<(i32, i32)> = (min_cx..=max_cx)
@@ -303,7 +314,7 @@ pub(crate) fn run_pipeline_streaming(
     }
 
     // Build resolved ways + spatial index
-    progress_cb(0.30, "Building spatial index");
+    tracker.phase(0.30, "Building spatial index");
     let resolved_ways = terrain::resolve_ways(&data, &conv);
     let resolved_relations = terrain::resolve_relations(&data, &conv);
     let spatial_index = SpatialIndex::build(&resolved_ways);
@@ -348,7 +359,7 @@ pub(crate) fn run_pipeline_streaming(
         )?),
     };
 
-    progress_cb(0.35, "Converting in tiles");
+    tracker.phase(0.35, "Converting in tiles");
 
     let tile_cx_count = (max_cx - min_cx + TILE_CHUNKS) / TILE_CHUNKS;
     let tile_cz_count = (max_cz - min_cz + TILE_CHUNKS) / TILE_CHUNKS;
@@ -370,7 +381,12 @@ pub(crate) fn run_pipeline_streaming(
             tile_num += 1;
 
             let tile_progress = 0.35 + 0.50 * (tile_num as f32 / total_tiles as f32);
-            progress_cb(tile_progress, &format!("Tile {tile_num}/{total_tiles}"));
+            tracker.tile(
+                tile_num as u64,
+                total_tiles as u64,
+                tile_progress,
+                &format!("Tile {tile_num}/{total_tiles}"),
+            );
 
             // Log at every 10% increment.
             let pct = tile_num * 100 / total_tiles.max(1);
@@ -421,11 +437,11 @@ pub(crate) fn run_pipeline_streaming(
         Edition::Bedrock => "Flushing LevelDB",
         Edition::Java => "Saving world",
     };
-    progress_cb(0.88, finalize_msg);
+    tracker.phase(0.88, finalize_msg);
     world.save(spawn_x, spawn_y, spawn_z)?;
-    progress_cb(0.95, "Writing level.dat");
+    tracker.phase(0.95, "Writing level.dat");
 
-    progress_cb(0.99, "Streaming conversion complete");
+    tracker.phase(0.99, "Streaming conversion complete");
     log::info!("Streamed tiles → {}", params.output.display());
 
     Ok((spawn_x, spawn_y, spawn_z))

@@ -462,7 +462,7 @@ fn fill_terrain_chunk(
 #[allow(dead_code)] // re-exported public API (pipeline::run_terrain_only); legacy in-memory terrain path
 pub fn run_terrain_only(
     params: &TerrainParams,
-    progress_cb: &dyn Fn(f32, &str),
+    progress_cb: &dyn Fn(&super::ProgressReport),
 ) -> Result<(Box<dyn WorldWriter>, i32, i32, i32)> {
     let (min_lat, min_lon, max_lat, max_lon) = params.bbox;
     let origin_lat = (min_lat + max_lat) / 2.0;
@@ -511,7 +511,7 @@ pub fn run_terrain_only(
         chunk_coords.len()
     );
 
-    progress_cb(0.15, "Filling terrain");
+    progress_cb(&super::ProgressReport::simple(0.15, "Filling terrain"));
 
     let sea = params.sea_level;
     let snow_line = params.snow_line;
@@ -535,7 +535,7 @@ pub fn run_terrain_only(
         })
         .collect();
 
-    progress_cb(0.85, "Building world");
+    progress_cb(&super::ProgressReport::simple(0.85, "Building world"));
 
     let mut world = params.edition.create_world(&params.output);
     let mut height_map = HeightMap::new(sea);
@@ -562,7 +562,7 @@ pub fn run_terrain_only(
         .unwrap_or_else(|| height_map.get(spawn_x, spawn_z) + 1);
 
     log::info!("Spawn: ({}, {}, {})", spawn_x, spawn_y, spawn_z);
-    progress_cb(0.90, "Terrain complete");
+    progress_cb(&super::ProgressReport::simple(0.90, "Terrain complete"));
     Ok((world, spawn_x, spawn_y, spawn_z))
 }
 
@@ -571,7 +571,7 @@ pub fn run_terrain_only(
 /// Uses tiled streaming to bound memory usage.
 pub fn run_terrain_only_to_disk(
     params: &TerrainParams,
-    progress_cb: &dyn Fn(f32, &str),
+    progress_cb: &dyn Fn(&super::ProgressReport),
 ) -> Result<()> {
     let (min_lat, min_lon, max_lat, max_lon) = params.bbox;
     let origin_lat = (min_lat + max_lat) / 2.0;
@@ -629,6 +629,8 @@ pub fn run_terrain_only_to_disk(
     let mut tile_idx = 0u64;
     let mut last_logged_pct = 0u64;
 
+    let mut tracker = super::ProgressTracker::new(progress_cb, super::wall_clock());
+
     if params.edition == Edition::Bedrock {
         // Bedrock: stream tiles to LevelDB via ChunkWriter
         let db_path = params.output.join("db");
@@ -647,7 +649,9 @@ pub fn run_terrain_only_to_disk(
                 let tcz1 = (tcz0 + TILE_CHUNKS - 1).min(max_cz);
 
                 let progress = tile_idx as f32 / total_tiles as f32 * 0.90;
-                progress_cb(
+                tracker.tile(
+                    tile_idx + 1,
+                    total_tiles,
                     progress,
                     &format!("Filling terrain tile {}/{total_tiles}", tile_idx + 1),
                 );
@@ -701,7 +705,7 @@ pub fn run_terrain_only_to_disk(
             height_map.smooth(params.elevation_smoothing);
         }
 
-        progress_cb(0.92, "Flushing to disk");
+        tracker.phase(0.92, "Flushing to disk");
         chunk_writer.finish()?;
 
         let (spawn_x, spawn_z) = if let (Some(sx), Some(sz)) = (params.spawn_x, params.spawn_z) {
@@ -737,7 +741,9 @@ pub fn run_terrain_only_to_disk(
                 let tcz1 = (tcz0 + TILE_CHUNKS - 1).min(max_cz);
 
                 let progress = tile_idx as f32 / total_tiles as f32 * 0.90;
-                progress_cb(
+                tracker.tile(
+                    tile_idx + 1,
+                    total_tiles,
                     progress,
                     &format!("Filling terrain tile {}/{total_tiles}", tile_idx + 1),
                 );
@@ -808,11 +814,11 @@ pub fn run_terrain_only_to_disk(
 
         log::info!("Spawn: ({}, {}, {})", spawn_x, spawn_y, spawn_z);
 
-        progress_cb(0.92, "Saving world");
+        tracker.phase(0.92, "Saving world");
         world.save(spawn_x, spawn_y, spawn_z)?;
     }
 
-    progress_cb(1.0, "Terrain world complete");
+    tracker.phase(1.0, "Terrain world complete");
     log::info!(
         "Done! Streamed {} chunks to '{}'.",
         total_chunks,

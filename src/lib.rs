@@ -39,8 +39,8 @@
 //!     block_overrides: None,
 //! };
 //!
-//! run_conversion(&params, &|progress, msg| {
-//!     println!("[{:3.0}%] {msg}", progress * 100.0);
+//! run_conversion(&params, &|report| {
+//!     println!("[{:3.0}%] {}", report.progress * 100.0, report.message);
 //! }).expect("conversion failed");
 //! ```
 

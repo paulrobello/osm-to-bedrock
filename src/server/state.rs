@@ -34,6 +34,10 @@ pub(crate) enum JobState {
     Running {
         progress: f32,
         message: String,
+        /// Estimated seconds remaining. `None` until the tile phase has a rate signal.
+        eta_seconds: Option<f64>,
+        /// Smoothed tiles/sec rate. `None` outside the tile phase.
+        rate: Option<f32>,
     },
     Done {
         path: PathBuf,
@@ -325,6 +329,8 @@ mod tests {
                 JobState::Running {
                     progress: 0.5,
                     message: "converting".to_string(),
+                    eta_seconds: None,
+                    rate: None,
                 },
             );
             panic!("simulated worker panic");
@@ -342,6 +348,8 @@ mod tests {
             JobState::Running {
                 progress: 0.0,
                 message: "queued".to_string(),
+                eta_seconds: None,
+                rate: None,
             },
         );
         assert_eq!(jobs.len(), 3);

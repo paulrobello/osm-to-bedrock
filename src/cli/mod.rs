@@ -252,7 +252,11 @@ mod tests {
             surface_thickness: 4,
             block_overrides: None,
         };
-        let result = run_conversion_from_data(data, &convert_params, &|_, _| {});
+        let result = run_conversion_from_data(
+            data,
+            &convert_params,
+            &|_report: &crate::pipeline::ProgressReport| {},
+        );
         assert!(
             result.is_ok(),
             "conversion should succeed even with roads disabled"

@@ -41,7 +41,8 @@ use crate::geojson_export;
 use crate::osm;
 use crate::params::{ConvertParams, TerrainParams};
 use crate::pipeline::{
-    run_conversion, run_conversion_preview, run_surface_preview, run_terrain_only_to_disk,
+    ProgressReport, run_conversion, run_conversion_preview, run_surface_preview,
+    run_terrain_only_to_disk,
 };
 
 use super::error::ApiError;
@@ -80,6 +81,8 @@ where
         JobState::Running {
             progress: 0.0,
             message: "Queued".to_string(),
+            eta_seconds: None,
+            rate: None,
         },
     );
     let jobs = state.jobs.clone();
@@ -481,12 +484,14 @@ pub(crate) async fn convert_handler(
         let jobs_for_progress = jobs.clone();
         let jid_for_progress = jid.clone();
 
-        let result = run_conversion(&params, &|progress, msg| {
+        let result = run_conversion(&params, &|report: &ProgressReport| {
             jobs_for_progress.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
-                    progress,
-                    message: msg.to_string(),
+                    progress: report.progress,
+                    message: report.message.clone(),
+                    eta_seconds: report.eta.map(|d| d.as_secs_f64()),
+                    rate: report.rate,
                 },
             );
         });
@@ -581,7 +586,7 @@ pub(crate) async fn preview_handler(
         };
 
         let (world, spawn_x, spawn_y, spawn_z) =
-            run_conversion_preview(&params, &|_progress, _msg| {})?;
+            run_conversion_preview(&params, &|_report: &ProgressReport| {})?;
 
         let surface = world.surface_blocks();
 
@@ -706,7 +711,7 @@ pub(crate) async fn fetch_block_preview_handler(
         };
 
         let (mut surface, spawn_x, spawn_y, spawn_z) =
-            run_surface_preview(data, &params, &|_progress, _msg| {})?;
+            run_surface_preview(data, &params, &|_report: &ProgressReport| {})?;
 
         // Compute bounds from the surface data
         let mut xs: Vec<i32> = surface.iter().map(|(x, _, _, _)| *x).collect();
@@ -825,6 +830,8 @@ pub(crate) async fn fetch_convert_handler(
                     JobState::Running {
                         progress: progress * 0.3,
                         message: msg.to_string(),
+                        eta_seconds: None,
+                        rate: None,
                     },
                 );
             },
@@ -906,15 +913,18 @@ pub(crate) async fn fetch_convert_handler(
         let jobs_for_progress = jobs.clone();
         let jid_for_progress = jid.clone();
 
-        let result = crate::pipeline::run_conversion_from_data(data, &params, &|progress, msg| {
-            jobs_for_progress.insert(
-                jid_for_progress.clone(),
-                JobState::Running {
-                    progress: fetch_convert_phase_progress(progress, req_use_elevation),
-                    message: msg.to_string(),
-                },
-            );
-        });
+        let result =
+            crate::pipeline::run_conversion_from_data(data, &params, &|report: &ProgressReport| {
+                jobs_for_progress.insert(
+                    jid_for_progress.clone(),
+                    JobState::Running {
+                        progress: fetch_convert_phase_progress(report.progress, req_use_elevation),
+                        message: report.message.clone(),
+                        eta_seconds: report.eta.map(|d| d.as_secs_f64()),
+                        rate: report.rate,
+                    },
+                );
+            });
 
         finalize_conversion(
             &jobs,
@@ -993,12 +1003,14 @@ pub(crate) async fn terrain_convert_handler(
         let jobs_for_progress = jobs.clone();
         let jid_for_progress = jid.clone();
 
-        let result = run_terrain_only_to_disk(&params, &|progress, msg| {
+        let result = run_terrain_only_to_disk(&params, &|report: &ProgressReport| {
             jobs_for_progress.insert(
                 jid_for_progress.clone(),
                 JobState::Running {
-                    progress,
-                    message: msg.to_string(),
+                    progress: report.progress,
+                    message: report.message.clone(),
+                    eta_seconds: report.eta.map(|d| d.as_secs_f64()),
+                    rate: report.rate,
                 },
             );
         });
@@ -1072,6 +1084,8 @@ pub(crate) async fn overture_convert_handler(
                     JobState::Running {
                         progress: progress * 0.3,
                         message: msg.to_string(),
+                        eta_seconds: None,
+                        rate: None,
                     },
                 );
             },
@@ -1155,15 +1169,18 @@ pub(crate) async fn overture_convert_handler(
         let jobs_for_progress = jobs.clone();
         let jid_for_progress = jid.clone();
 
-        let result = crate::pipeline::run_conversion_from_data(data, &params, &|progress, msg| {
-            jobs_for_progress.insert(
-                jid_for_progress.clone(),
-                JobState::Running {
-                    progress: 0.3 + progress * 0.6,
-                    message: msg.to_string(),
-                },
-            );
-        });
+        let result =
+            crate::pipeline::run_conversion_from_data(data, &params, &|report: &ProgressReport| {
+                jobs_for_progress.insert(
+                    jid_for_progress.clone(),
+                    JobState::Running {
+                        progress: 0.3 + report.progress * 0.6,
+                        message: report.message.clone(),
+                        eta_seconds: report.eta.map(|d| d.as_secs_f64()),
+                        rate: report.rate,
+                    },
+                );
+            });
 
         finalize_conversion(
             &jobs,
@@ -1191,11 +1208,24 @@ pub(crate) async fn status_handler(
     // (and any clones taken) before it drops.
     match state.jobs.get(&job_id) {
         Some(g) => match &*g {
-            JobState::Running { progress, message } => Ok(Json(json!({
-                "state": "running",
-                "progress": progress,
-                "message": message,
-            }))),
+            JobState::Running {
+                progress,
+                message,
+                eta_seconds,
+                rate,
+            } => {
+                let mut m = serde_json::Map::new();
+                m.insert("state".into(), serde_json::json!("running"));
+                m.insert("progress".into(), serde_json::json!(progress));
+                m.insert("message".into(), serde_json::json!(message));
+                if let Some(eta) = eta_seconds {
+                    m.insert("eta_seconds".into(), serde_json::json!(eta));
+                }
+                if let Some(r) = rate {
+                    m.insert("rate".into(), serde_json::json!(r));
+                }
+                Ok(Json(serde_json::Value::Object(m)))
+            }
             JobState::Done { .. } => Ok(Json(json!({
                 "state": "done",
                 "progress": 1.0,
@@ -1337,6 +1367,8 @@ fn download_elevation_for_bbox_mapped(
                 JobState::Running {
                     progress: map_progress(fraction),
                     message: message.to_string(),
+                    eta_seconds: None,
+                    rate: None,
                 },
             );
         },
