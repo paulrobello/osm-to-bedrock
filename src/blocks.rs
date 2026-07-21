@@ -310,6 +310,73 @@ impl Block {
             _ => vec![],
         }
     }
+
+    /// Parse a block by its enum variant name (exact PascalCase), e.g. `"OakLog"`.
+    ///
+    /// Used by the custom block-mapping loader to resolve user-supplied names.
+    /// The authoritative variant/name list lives in `ALL_BLOCK_VARIANTS` in the
+    /// tests below — keep this match in sync with it.
+    pub fn from_name(name: &str) -> Option<Block> {
+        Some(match name {
+            "Air" => Block::Air,
+            "Bedrock" => Block::Bedrock,
+            "Stone" => Block::Stone,
+            "Dirt" => Block::Dirt,
+            "GrassBlock" => Block::GrassBlock,
+            "Water" => Block::Water,
+            "Sand" => Block::Sand,
+            "Gravel" => Block::Gravel,
+            "OakLog" => Block::OakLog,
+            "OakLeaves" => Block::OakLeaves,
+            "StoneBrick" => Block::StoneBrick,
+            "Concrete" => Block::Concrete,
+            "Cobblestone" => Block::Cobblestone,
+            "BlackConcrete" => Block::BlackConcrete,
+            "GrayConcrete" => Block::GrayConcrete,
+            "StoneSlab" => Block::StoneSlab,
+            "YellowConcrete" => Block::YellowConcrete,
+            "OakSign" => Block::OakSign,
+            "GlassPane" => Block::GlassPane,
+            "OakStairs" => Block::OakStairs,
+            "OakSlab" => Block::OakSlab,
+            "OakFence" => Block::OakFence,
+            "CobblestoneWall" => Block::CobblestoneWall,
+            "Brick" => Block::Brick,
+            "Sandstone" => Block::Sandstone,
+            "OakPlanks" => Block::OakPlanks,
+            "SprucePlanks" => Block::SprucePlanks,
+            "WhiteConcrete" => Block::WhiteConcrete,
+            "StoneBrickStairs" => Block::StoneBrickStairs,
+            "Rail" => Block::Rail,
+            "TallGrass" => Block::TallGrass,
+            "Fern" => Block::Fern,
+            "Poppy" => Block::Poppy,
+            "Torch" => Block::Torch,
+            "Lantern" => Block::Lantern,
+            "StoneBrickWall" => Block::StoneBrickWall,
+            "BirchLog" => Block::BirchLog,
+            "BirchLeaves" => Block::BirchLeaves,
+            "PolishedBlackstoneSlab" => Block::PolishedBlackstoneSlab,
+            "SmoothStoneSlab" => Block::SmoothStoneSlab,
+            "AndesiteSlab" => Block::AndesiteSlab,
+            "CherrySign" => Block::CherrySign,
+            "Snow" => Block::Snow,
+            "SnowLayer" => Block::SnowLayer,
+            "Ice" => Block::Ice,
+            "CherryHangingSign" => Block::CherryHangingSign,
+            "Dispenser" => Block::Dispenser,
+            "BrewingStand" => Block::BrewingStand,
+            "Bookshelf" => Block::Bookshelf,
+            "Cauldron" => Block::Cauldron,
+            "Bed" => Block::Bed,
+            "Furnace" => Block::Furnace,
+            "Barrel" => Block::Barrel,
+            "Bell" => Block::Bell,
+            "Campfire" => Block::Campfire,
+            "HayBale" => Block::HayBale,
+            _ => return None,
+        })
+    }
 }
 
 /// Typed block state value for Bedrock Edition NBT palette entries.
@@ -844,5 +911,89 @@ mod tests {
         assert_eq!(surface_to_java_biome(Block::Dirt), "minecraft:plains");
         assert_eq!(surface_to_java_biome(Block::Concrete), "minecraft:plains");
         assert_eq!(surface_to_java_biome(Block::StoneBrick), "minecraft:plains");
+    }
+
+    // ── Block::from_name tests ──────────────────────────────────────────
+
+    /// The authoritative list of (variant, name) pairs. Adding a new Block
+    /// variant requires adding it here AND to `Block::from_name`. This test
+    /// enforces that every listed variant round-trips through its name.
+    const ALL_BLOCK_VARIANTS: &[(Block, &str)] = &[
+        (Block::Air, "Air"),
+        (Block::Bedrock, "Bedrock"),
+        (Block::Stone, "Stone"),
+        (Block::Dirt, "Dirt"),
+        (Block::GrassBlock, "GrassBlock"),
+        (Block::Water, "Water"),
+        (Block::Sand, "Sand"),
+        (Block::Gravel, "Gravel"),
+        (Block::OakLog, "OakLog"),
+        (Block::OakLeaves, "OakLeaves"),
+        (Block::StoneBrick, "StoneBrick"),
+        (Block::Concrete, "Concrete"),
+        (Block::Cobblestone, "Cobblestone"),
+        (Block::BlackConcrete, "BlackConcrete"),
+        (Block::GrayConcrete, "GrayConcrete"),
+        (Block::StoneSlab, "StoneSlab"),
+        (Block::YellowConcrete, "YellowConcrete"),
+        (Block::OakSign, "OakSign"),
+        (Block::GlassPane, "GlassPane"),
+        (Block::OakStairs, "OakStairs"),
+        (Block::OakSlab, "OakSlab"),
+        (Block::OakFence, "OakFence"),
+        (Block::CobblestoneWall, "CobblestoneWall"),
+        (Block::Brick, "Brick"),
+        (Block::Sandstone, "Sandstone"),
+        (Block::OakPlanks, "OakPlanks"),
+        (Block::SprucePlanks, "SprucePlanks"),
+        (Block::WhiteConcrete, "WhiteConcrete"),
+        (Block::StoneBrickStairs, "StoneBrickStairs"),
+        (Block::Rail, "Rail"),
+        (Block::TallGrass, "TallGrass"),
+        (Block::Fern, "Fern"),
+        (Block::Poppy, "Poppy"),
+        (Block::Torch, "Torch"),
+        (Block::Lantern, "Lantern"),
+        (Block::StoneBrickWall, "StoneBrickWall"),
+        (Block::BirchLog, "BirchLog"),
+        (Block::BirchLeaves, "BirchLeaves"),
+        (Block::PolishedBlackstoneSlab, "PolishedBlackstoneSlab"),
+        (Block::SmoothStoneSlab, "SmoothStoneSlab"),
+        (Block::AndesiteSlab, "AndesiteSlab"),
+        (Block::CherrySign, "CherrySign"),
+        (Block::Snow, "Snow"),
+        (Block::SnowLayer, "SnowLayer"),
+        (Block::Ice, "Ice"),
+        (Block::CherryHangingSign, "CherryHangingSign"),
+        (Block::Dispenser, "Dispenser"),
+        (Block::BrewingStand, "BrewingStand"),
+        (Block::Bookshelf, "Bookshelf"),
+        (Block::Cauldron, "Cauldron"),
+        (Block::Bed, "Bed"),
+        (Block::Furnace, "Furnace"),
+        (Block::Barrel, "Barrel"),
+        (Block::Bell, "Bell"),
+        (Block::Campfire, "Campfire"),
+        (Block::HayBale, "HayBale"),
+    ];
+
+    #[test]
+    fn from_name_round_trips_all_variants() {
+        assert_eq!(ALL_BLOCK_VARIANTS.len(), 56, "expected 56 Block variants");
+        for &(block, name) in ALL_BLOCK_VARIANTS {
+            assert_eq!(
+                Block::from_name(name),
+                Some(block),
+                "from_name({name:?}) should return {block:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn from_name_rejects_unknown() {
+        assert_eq!(Block::from_name("NotABlock"), None);
+        assert_eq!(Block::from_name("oak_log"), None); // minecraft-id form is NOT accepted
+        assert_eq!(Block::from_name("oaklog"), None); // case must match exactly
+        assert_eq!(Block::from_name(""), None);
     }
 }
