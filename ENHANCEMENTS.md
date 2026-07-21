@@ -32,7 +32,7 @@ Provide ETA estimates based on chunks completed vs total, processing rate, and h
 ### NBT Round-Trip Tests
 Serialize NBT data and verify it deserializes correctly. Test sign block entities, level.dat fields, and palette entries.
 
-**Partial:** `src/nbt.rs` pins SubChunk palette entries, `level.dat` fields, and sign-block-entity text via byte/substring checks, but this crate has no little-endian NBT reader, so writers are not yet verified by a full deserialize round-trip.
+**Done:** A little-endian NBT reader (`NbtValue` + `parse_nbt` in `src/nbt.rs`) now closes the serialize → deserialize loop over the exact tag subset the writers emit (`byte` / `int` / `long` / `float` / `string` / `compound`). `nbt::tests` round-trip every primitive tag, arbitrarily nested compounds, empty strings, and the full sign block entity, plus reader error paths (empty input, unterminated compound, unsupported tag type). `bedrock::tests` parse the real `level.dat` blob and a spread of SubChunk palette entries (Stone, GrassBlock, OakStairs, Rail, OakSign — including the directional `weirdo_direction` / `rail_direction` / `ground_sign_direction` overrides) and assert the decoded values. To reach those blobs without filesystem I/O or a full 4096-block sub-chunk, `write_level_dat` and `encode_subchunk` now delegate to pure builders (`build_level_dat_nbt`, `encode_palette_entry`) with no behavior change.
 
 ### Server API Tests
 Test all HTTP endpoints with `axum::test` — upload, convert, poll status, and download. Verify error handling for malformed uploads, missing jobs, and timeouts.

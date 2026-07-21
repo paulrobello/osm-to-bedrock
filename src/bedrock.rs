@@ -446,41 +446,7 @@ impl BedrockWorld {
 
     pub fn write_level_dat(&self, spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<()> {
         let path = self.output.join("level.dat");
-
-        let mut nbt: Vec<u8> = Vec::new();
-        // Root compound (empty name)
-        write_compound_start(&mut nbt, "")?;
-        write_int_tag(&mut nbt, "StorageVersion", 10)?;
-        write_int_tag(&mut nbt, "NetworkVersion", 594)?;
-        write_string_tag(&mut nbt, "LevelName", "OSM World")?;
-        write_int_tag(&mut nbt, "SpawnX", spawn_x)?;
-        write_int_tag(&mut nbt, "SpawnY", spawn_y)?;
-        write_int_tag(&mut nbt, "SpawnZ", spawn_z)?;
-        write_long_tag(&mut nbt, "Time", 6000)?;
-        write_long_tag(&mut nbt, "LastPlayed", 0)?;
-        write_int_tag(&mut nbt, "Generator", 2)?; // 2 = flat
-        write_int_tag(&mut nbt, "GameType", 1)?; // 1 = creative
-        write_int_tag(&mut nbt, "Difficulty", 0)?; // 0 = peaceful (no hostile mobs)
-        write_byte_tag(&mut nbt, "commandsEnabled", 1)?;
-        write_byte_tag(&mut nbt, "hasBeenLoadedInCreative", 1)?;
-        write_byte_tag(&mut nbt, "eduLevel", 0)?;
-        // Player permissions: 1 = operator
-        write_int_tag(&mut nbt, "PlayerPermissionsLevel", 2)?; // 2 = operator
-        write_int_tag(&mut nbt, "defaultPlayerPermissions", 2)?; // 2 = operator
-        // Show coordinates & copy coordinate UI
-        write_byte_tag(&mut nbt, "showcoordinates", 1)?;
-        write_byte_tag(&mut nbt, "enableCopyCoordinateUI", 1)?;
-        // Game rules: always day, no weather, no mobs, no friendly fire
-        write_byte_tag(&mut nbt, "dodaylightcycle", 0)?;
-        write_byte_tag(&mut nbt, "doweathercycle", 0)?;
-        write_byte_tag(&mut nbt, "domobspawning", 0)?;
-        write_byte_tag(&mut nbt, "domobloot", 0)?;
-        write_byte_tag(&mut nbt, "doentitydrops", 0)?;
-        write_byte_tag(&mut nbt, "pvp", 0)?; // no friendly fire / PvP
-        write_float_tag(&mut nbt, "rainLevel", 0.0)?;
-        write_float_tag(&mut nbt, "lightningLevel", 0.0)?;
-        write_int_tag(&mut nbt, "rainTime", 0)?;
-        write_end(&mut nbt)?;
+        let nbt = build_level_dat_nbt(spawn_x, spawn_y, spawn_z)?;
 
         // File header: [version: u32 LE][nbt_size: u32 LE][nbt...]
         let mut file: Vec<u8> = Vec::new();
@@ -491,6 +457,48 @@ impl BedrockWorld {
         std::fs::write(&path, &file).with_context(|| format!("writing {}", path.display()))?;
         Ok(())
     }
+}
+
+/// Build the little-endian NBT payload for `level.dat` (no file header).
+///
+/// Extracted from `write_level_dat` so the structure can be round-tripped
+/// through the reader without touching the filesystem.
+fn build_level_dat_nbt(spawn_x: i32, spawn_y: i32, spawn_z: i32) -> Result<Vec<u8>> {
+    let mut nbt: Vec<u8> = Vec::new();
+    // Root compound (empty name)
+    write_compound_start(&mut nbt, "")?;
+    write_int_tag(&mut nbt, "StorageVersion", 10)?;
+    write_int_tag(&mut nbt, "NetworkVersion", 594)?;
+    write_string_tag(&mut nbt, "LevelName", "OSM World")?;
+    write_int_tag(&mut nbt, "SpawnX", spawn_x)?;
+    write_int_tag(&mut nbt, "SpawnY", spawn_y)?;
+    write_int_tag(&mut nbt, "SpawnZ", spawn_z)?;
+    write_long_tag(&mut nbt, "Time", 6000)?;
+    write_long_tag(&mut nbt, "LastPlayed", 0)?;
+    write_int_tag(&mut nbt, "Generator", 2)?; // 2 = flat
+    write_int_tag(&mut nbt, "GameType", 1)?; // 1 = creative
+    write_int_tag(&mut nbt, "Difficulty", 0)?; // 0 = peaceful (no hostile mobs)
+    write_byte_tag(&mut nbt, "commandsEnabled", 1)?;
+    write_byte_tag(&mut nbt, "hasBeenLoadedInCreative", 1)?;
+    write_byte_tag(&mut nbt, "eduLevel", 0)?;
+    // Player permissions: 1 = operator
+    write_int_tag(&mut nbt, "PlayerPermissionsLevel", 2)?; // 2 = operator
+    write_int_tag(&mut nbt, "defaultPlayerPermissions", 2)?; // 2 = operator
+    // Show coordinates & copy coordinate UI
+    write_byte_tag(&mut nbt, "showcoordinates", 1)?;
+    write_byte_tag(&mut nbt, "enableCopyCoordinateUI", 1)?;
+    // Game rules: always day, no weather, no mobs, no friendly fire
+    write_byte_tag(&mut nbt, "dodaylightcycle", 0)?;
+    write_byte_tag(&mut nbt, "doweathercycle", 0)?;
+    write_byte_tag(&mut nbt, "domobspawning", 0)?;
+    write_byte_tag(&mut nbt, "domobloot", 0)?;
+    write_byte_tag(&mut nbt, "doentitydrops", 0)?;
+    write_byte_tag(&mut nbt, "pvp", 0)?; // no friendly fire / PvP
+    write_float_tag(&mut nbt, "rainLevel", 0.0)?;
+    write_float_tag(&mut nbt, "lightningLevel", 0.0)?;
+    write_int_tag(&mut nbt, "rainTime", 0)?;
+    write_end(&mut nbt)?;
+    Ok(nbt)
 }
 
 // ── WorldWriter trait implementation ──────────────────────────────────────
@@ -559,6 +567,61 @@ struct PaletteKey {
     block: Block,
     /// Direction value for directional blocks (signs, stairs, rails).
     direction: i32,
+}
+
+/// Encode one SubChunk palette entry as a little-endian NBT compound.
+///
+/// Extracted from `encode_subchunk` so palette entries can be round-tripped
+/// through the reader without assembling a full 4096-block sub-chunk.
+fn encode_palette_entry(pkey: &PaletteKey) -> Result<Vec<u8>> {
+    let mut entry: Vec<u8> = Vec::new();
+    write_compound_start(&mut entry, "")?;
+    write_string_tag(&mut entry, "name", pkey.block.bedrock_name())?;
+    write_compound_start(&mut entry, "states")?;
+
+    // Determine which state key is overridden by direction so we skip the
+    // default from block_states() and write only the actual direction value.
+    let direction_state_key: Option<&str> = if pkey.block == Block::OakSign {
+        Some("ground_sign_direction")
+    } else if matches!(pkey.block, Block::OakStairs | Block::StoneBrickStairs) {
+        Some("weirdo_direction")
+    } else if pkey.block == Block::Rail {
+        Some("rail_direction")
+    } else {
+        None
+    };
+
+    // Write block states from the Block's block_states() method,
+    // skipping any state whose key will be overridden by direction.
+    for state in pkey.block.block_states() {
+        let key = match &state {
+            BlockState::Int(k, _) => *k,
+            BlockState::Byte(k, _) => *k,
+            BlockState::String(k, _) => *k,
+        };
+        if direction_state_key == Some(key) {
+            continue; // will be written below with the actual direction value
+        }
+        match state {
+            BlockState::Int(k, val) => write_int_tag(&mut entry, k, val)?,
+            BlockState::Byte(k, val) => write_byte_tag(&mut entry, k, val)?,
+            BlockState::String(k, val) => write_string_tag(&mut entry, k, val)?,
+        }
+    }
+
+    // Write the direction override for directional blocks
+    if pkey.block == Block::OakSign {
+        write_int_tag(&mut entry, "ground_sign_direction", pkey.direction)?;
+    } else if matches!(pkey.block, Block::OakStairs | Block::StoneBrickStairs) {
+        write_int_tag(&mut entry, "weirdo_direction", pkey.direction)?;
+    } else if pkey.block == Block::Rail {
+        write_int_tag(&mut entry, "rail_direction", pkey.direction)?;
+    }
+
+    write_end(&mut entry)?; // end states
+    write_int_tag(&mut entry, "version", 18_105_860)?;
+    write_end(&mut entry)?; // end root compound
+    Ok(entry)
 }
 
 fn encode_subchunk(
@@ -646,53 +709,7 @@ fn encode_subchunk(
 
     // Palette entries as little-endian NBT compounds
     for pkey in &palette {
-        let mut entry: Vec<u8> = Vec::new();
-        write_compound_start(&mut entry, "")?;
-        write_string_tag(&mut entry, "name", pkey.block.bedrock_name())?;
-        write_compound_start(&mut entry, "states")?;
-
-        // Determine which state key is overridden by direction so we skip the
-        // default from block_states() and write only the actual direction value.
-        let direction_state_key: Option<&str> = if pkey.block == Block::OakSign {
-            Some("ground_sign_direction")
-        } else if matches!(pkey.block, Block::OakStairs | Block::StoneBrickStairs) {
-            Some("weirdo_direction")
-        } else if pkey.block == Block::Rail {
-            Some("rail_direction")
-        } else {
-            None
-        };
-
-        // Write block states from the Block's block_states() method,
-        // skipping any state whose key will be overridden by direction.
-        for state in pkey.block.block_states() {
-            let key = match &state {
-                BlockState::Int(k, _) => *k,
-                BlockState::Byte(k, _) => *k,
-                BlockState::String(k, _) => *k,
-            };
-            if direction_state_key == Some(key) {
-                continue; // will be written below with the actual direction value
-            }
-            match state {
-                BlockState::Int(k, val) => write_int_tag(&mut entry, k, val)?,
-                BlockState::Byte(k, val) => write_byte_tag(&mut entry, k, val)?,
-                BlockState::String(k, val) => write_string_tag(&mut entry, k, val)?,
-            }
-        }
-
-        // Write the direction override for directional blocks
-        if pkey.block == Block::OakSign {
-            write_int_tag(&mut entry, "ground_sign_direction", pkey.direction)?;
-        } else if matches!(pkey.block, Block::OakStairs | Block::StoneBrickStairs) {
-            write_int_tag(&mut entry, "weirdo_direction", pkey.direction)?;
-        } else if pkey.block == Block::Rail {
-            write_int_tag(&mut entry, "rail_direction", pkey.direction)?;
-        }
-
-        write_end(&mut entry)?; // end states
-        write_int_tag(&mut entry, "version", 18_105_860)?;
-        write_end(&mut entry)?; // end root compound
+        let entry = encode_palette_entry(pkey)?;
         data.extend_from_slice(&entry);
     }
 
@@ -741,6 +758,7 @@ fn encode_data2d(chunk: &ChunkData) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::blocks::Block;
+    use crate::nbt::{NbtValue, parse_nbt};
 
     #[test]
     fn data2d_biome_water_column() {
@@ -801,5 +819,83 @@ mod tests {
             Block::Air,
             "Out-of-bounds should be Air"
         );
+    }
+
+    // ── NBT round-trip: level.dat + SubChunk palette entries ─────────────
+    //
+    // These parse the real blobs the Bedrock writers emit and compare the
+    // decoded values, closing the serialize → deserialize loop that the
+    // byte/substring checks in src/nbt.rs alone could not.
+
+    #[test]
+    fn level_dat_round_trips_through_nbt_reader() {
+        let nbt = build_level_dat_nbt(10, 64, -20).expect("level.dat NBT builds");
+        let root = parse_nbt(&nbt).expect("level.dat NBT parses");
+
+        assert_eq!(root.get("StorageVersion"), Some(&NbtValue::Int(10)));
+        assert_eq!(root.get("NetworkVersion"), Some(&NbtValue::Int(594)));
+        assert_eq!(
+            root.get("LevelName"),
+            Some(&NbtValue::String("OSM World".into()))
+        );
+        assert_eq!(root.get("SpawnX"), Some(&NbtValue::Int(10)));
+        assert_eq!(root.get("SpawnY"), Some(&NbtValue::Int(64)));
+        assert_eq!(root.get("SpawnZ"), Some(&NbtValue::Int(-20)));
+        assert_eq!(root.get("Time"), Some(&NbtValue::Long(6000)));
+        assert_eq!(root.get("Generator"), Some(&NbtValue::Int(2)));
+        assert_eq!(root.get("GameType"), Some(&NbtValue::Int(1)));
+        assert_eq!(root.get("commandsEnabled"), Some(&NbtValue::Byte(1)));
+        assert_eq!(root.get("pvp"), Some(&NbtValue::Byte(0)));
+        assert_eq!(root.get("rainLevel"), Some(&NbtValue::Float(0.0)));
+    }
+
+    #[test]
+    fn palette_entry_round_trips_through_nbt_reader() {
+        // A spread of blocks: a plain block, a stateful block, and every
+        // directional block whose direction override the encoder special-cases.
+        let cases: [(Block, i32); 5] = [
+            (Block::Stone, 0),
+            (Block::GrassBlock, 0),
+            (Block::OakStairs, 3),
+            (Block::Rail, 5),
+            (Block::OakSign, 8),
+        ];
+
+        for (block, direction) in cases {
+            let pkey = PaletteKey { block, direction };
+            let blob = encode_palette_entry(&pkey)
+                .unwrap_or_else(|e| panic!("encoding {}: {e}", block.bedrock_name()));
+            let root = parse_nbt(&blob)
+                .unwrap_or_else(|e| panic!("parsing {}: {e}", block.bedrock_name()));
+
+            assert_eq!(
+                root.get("name"),
+                Some(&NbtValue::String(block.bedrock_name().into())),
+                "name for {}",
+                block.bedrock_name()
+            );
+            assert_eq!(root.get("version"), Some(&NbtValue::Int(18_105_860)));
+            assert!(
+                matches!(root.get("states"), Some(NbtValue::Compound(_))),
+                "states must be a compound for {}",
+                block.bedrock_name()
+            );
+
+            // The directional override lands in its dedicated state key.
+            let dir_key = match block {
+                Block::OakSign => Some("ground_sign_direction"),
+                Block::OakStairs | Block::StoneBrickStairs => Some("weirdo_direction"),
+                Block::Rail => Some("rail_direction"),
+                _ => None,
+            };
+            if let Some(key) = dir_key {
+                assert_eq!(
+                    root.get("states").unwrap().get(key),
+                    Some(&NbtValue::Int(direction)),
+                    "{key} for {}",
+                    block.bedrock_name()
+                );
+            }
+        }
     }
 }
