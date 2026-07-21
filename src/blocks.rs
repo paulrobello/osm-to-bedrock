@@ -1,5 +1,7 @@
 //! Block type definitions and OSM tag → Minecraft block mappings.
 
+use std::collections::HashMap;
+
 use crate::osm::TagMap;
 
 /// Minecraft blocks used in world generation, stored as u8 for memory efficiency.
@@ -385,6 +387,25 @@ pub enum BlockState {
     Int(&'static str, i32),
     Byte(&'static str, i8),
     String(&'static str, &'static str),
+}
+
+/// User-supplied overrides for the OSM tag → Block mappings.
+///
+/// Each map is keyed by the OSM tag *value*:
+/// - `building`: the `building:material` value
+/// - `highway`: the `highway` value (overrides the road **surface** block only)
+/// - `landuse`: the `landuse` value
+/// - `natural`: the `natural` value
+///
+/// An empty map (the `Default`) means "no overrides for this category" and the
+/// built-in mapping is used. Loaded from a YAML file via
+/// [`crate::block_mapping::load_block_overrides`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlockOverrides {
+    pub building: HashMap<String, Block>,
+    pub highway: HashMap<String, Block>,
+    pub landuse: HashMap<String, Block>,
+    pub natural: HashMap<String, Block>,
 }
 
 // ── OSM tag → Block mappings ───────────────────────────────────────────────

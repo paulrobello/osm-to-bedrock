@@ -45,6 +45,7 @@
 
 pub mod anvil;
 pub mod bedrock;
+pub mod block_mapping;
 pub mod blocks;
 pub mod cli;
 pub mod config;
