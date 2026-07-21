@@ -239,6 +239,7 @@ mod tests {
             vertical_scale: 1.0,
             elevation_smoothing: 1,
             surface_thickness: 4,
+            block_overrides: None,
         };
         let data = OsmData::default()
             .with_nodes(HashMap::from([(
@@ -300,6 +301,7 @@ mod tests {
             vertical_scale: 1.0,
             elevation_smoothing: 1,
             surface_thickness: 4,
+            block_overrides: None,
         };
         let data = OsmData::default();
         let timer = MetadataTimer::start();

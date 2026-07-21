@@ -475,6 +475,7 @@ pub(crate) async fn convert_handler(
             vertical_scale: options.vertical_scale,
             elevation_smoothing: options.elevation_smoothing,
             surface_thickness: options.surface_thickness,
+            block_overrides: None,
         };
 
         let jobs_for_progress = jobs.clone();
@@ -576,6 +577,7 @@ pub(crate) async fn preview_handler(
             vertical_scale: 1.0,
             elevation_smoothing: 0,
             surface_thickness: 4,
+            block_overrides: None,
         };
 
         let (world, spawn_x, spawn_y, spawn_z) =
@@ -700,6 +702,7 @@ pub(crate) async fn fetch_block_preview_handler(
             vertical_scale: 1.0,
             elevation_smoothing: 0,
             surface_thickness: 4,
+            block_overrides: None,
         };
 
         let (mut surface, spawn_x, spawn_y, spawn_z) =
@@ -897,6 +900,7 @@ pub(crate) async fn fetch_convert_handler(
             vertical_scale: options.vertical_scale,
             elevation_smoothing: options.elevation_smoothing,
             surface_thickness: options.surface_thickness,
+            block_overrides: None,
         };
 
         let jobs_for_progress = jobs.clone();
@@ -1145,6 +1149,7 @@ pub(crate) async fn overture_convert_handler(
             vertical_scale: options.vertical_scale,
             elevation_smoothing: options.elevation_smoothing,
             surface_thickness: options.surface_thickness,
+            block_overrides: None,
         };
 
         let jobs_for_progress = jobs.clone();

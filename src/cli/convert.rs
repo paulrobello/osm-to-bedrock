@@ -60,6 +60,7 @@ pub fn run_convert(args: &ConvertArgs, config: &Config) -> Result<()> {
             .surface_thickness
             .or(config.surface_thickness)
             .unwrap_or(4),
+        block_overrides: None,
     };
 
     run_conversion(&convert_params, &log_progress)?;
@@ -243,6 +244,7 @@ pub fn run_fetch_convert(args: &FetchConvertArgs, config: &Config) -> Result<()>
             .surface_thickness
             .or(config.surface_thickness)
             .unwrap_or(4),
+        block_overrides: None,
     };
 
     run_conversion_from_data(data, &convert_params, &print_progress)?;
@@ -312,6 +314,7 @@ pub fn run_overture_convert(args: &OvertureConvertArgs, config: &Config) -> Resu
             .surface_thickness
             .or(config.surface_thickness)
             .unwrap_or(4),
+        block_overrides: None,
     };
 
     run_conversion_from_data(data, &convert_params, &print_progress)?;

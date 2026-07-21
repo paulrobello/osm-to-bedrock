@@ -210,7 +210,7 @@ pub fn run_surface_preview(
             .get("highway")
             .map(|s| s.as_str())
             .unwrap_or("residential");
-        let style = blocks::highway_to_style(hw_type);
+        let style = blocks::highway_to_style(hw_type, None);
         let hw = style.half_width;
         for seg in pts.windows(2) {
             let (x0, z0) = seg[0];
@@ -519,6 +519,7 @@ fn run_pipeline(
         conv: &conv,
         spatial_index: &spatial_index,
         surface,
+        block_overrides: params.block_overrides.as_ref(),
     };
     let tile = TileWays {
         landuse: &spatial_index.landuse,

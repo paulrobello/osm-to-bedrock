@@ -223,6 +223,7 @@ mod tests {
             vertical_scale: 1.0,
             elevation_smoothing: 1,
             surface_thickness: 4,
+            block_overrides: None,
         };
         let result = run_conversion_from_data(data, &convert_params, &|_, _| {});
         assert!(

@@ -51,6 +51,9 @@ pub struct ConvertParams {
     pub elevation_smoothing: i32,
     /// Terrain fill depth below surface in blocks (default 4).
     pub surface_thickness: i32,
+    /// User-supplied OSM tag → Block overrides (loaded from `--block-mapping`).
+    /// `None` (no overrides) on the server and in `terrain-convert`.
+    pub block_overrides: Option<crate::blocks::BlockOverrides>,
 }
 
 /// Parameters for the terrain-only pipeline (SRTM elevation → Bedrock world).
@@ -129,6 +132,7 @@ mod tests {
             vertical_scale: 1.0,
             elevation_smoothing: 1,
             surface_thickness: 4,
+            block_overrides: None,
         };
         // Spot-check the values that downstream pipeline math depends on.
         assert_eq!(params.sea_level, 65);
@@ -231,6 +235,7 @@ mod tests {
             vertical_scale: 1.0,
             elevation_smoothing: 1,
             surface_thickness: 4,
+            block_overrides: None,
         }
     }
 }

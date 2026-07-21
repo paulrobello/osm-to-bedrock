@@ -36,6 +36,7 @@
 //!     vertical_scale: 1.0,
 //!     elevation_smoothing: 1,
 //!     surface_thickness: 4,
+//!     block_overrides: None,
 //! };
 //!
 //! run_conversion(&params, &|progress, msg| {

@@ -422,7 +422,20 @@ pub struct RoadStyle {
 }
 
 /// Map `highway=*` value to a road style (block, width, sidewalks).
-pub fn highway_to_style(highway_type: &str) -> RoadStyle {
+///
+/// When `ov` contains an entry for `highway_type`, its block replaces the road
+/// **surface** only; width, sidewalk, and flags come from the built-in default.
+pub fn highway_to_style(highway_type: &str, ov: Option<&BlockOverrides>) -> RoadStyle {
+    let mut style = default_highway_to_style(highway_type);
+    if let Some(o) = ov
+        && let Some(&surface) = o.highway.get(highway_type)
+    {
+        style.surface = surface;
+    }
+    style
+}
+
+fn default_highway_to_style(highway_type: &str) -> RoadStyle {
     match highway_type {
         "motorway" | "trunk" => RoadStyle {
             surface: Block::PolishedBlackstoneSlab,
@@ -475,8 +488,17 @@ pub fn highway_to_style(highway_type: &str) -> RoadStyle {
     }
 }
 
-/// Map `landuse=*` value to a surface block.
-pub fn landuse_to_block(landuse: &str) -> Block {
+/// Map `landuse=*` value to a surface block, honouring user overrides.
+pub fn landuse_to_block(landuse: &str, ov: Option<&BlockOverrides>) -> Block {
+    if let Some(o) = ov
+        && let Some(&b) = o.landuse.get(landuse)
+    {
+        return b;
+    }
+    default_landuse_to_block(landuse)
+}
+
+fn default_landuse_to_block(landuse: &str) -> Block {
     match landuse {
         "forest" | "wood" => Block::OakLog,
         "grass" | "meadow" | "park" | "recreation_ground" | "village_green" => Block::GrassBlock,
@@ -487,8 +509,17 @@ pub fn landuse_to_block(landuse: &str) -> Block {
     }
 }
 
-/// Block for `natural=*` features.
-pub fn natural_to_block(natural: &str) -> Block {
+/// Block for `natural=*` features, honouring user overrides.
+pub fn natural_to_block(natural: &str, ov: Option<&BlockOverrides>) -> Block {
+    if let Some(o) = ov
+        && let Some(&b) = o.natural.get(natural)
+    {
+        return b;
+    }
+    default_natural_to_block(natural)
+}
+
+fn default_natural_to_block(natural: &str) -> Block {
     match natural {
         "water" | "bay" | "strait" => Block::Water,
         "beach" | "sand" => Block::Sand,
@@ -576,8 +607,19 @@ pub fn waterway_to_style(waterway_type: &str, tags: &TagMap, scale: f64) -> Wate
     WaterwayStyle { half_width, depth }
 }
 
-/// Choose a building wall block based on `building:material` tag.
-pub fn building_block(tags: &TagMap) -> Block {
+/// Choose a building wall block based on `building:material`, honouring user
+/// overrides keyed by the material value.
+pub fn building_block(tags: &TagMap, ov: Option<&BlockOverrides>) -> Block {
+    if let Some(material) = tags.get("building:material")
+        && let Some(o) = ov
+        && let Some(&b) = o.building.get(material)
+    {
+        return b;
+    }
+    default_building_block(tags)
+}
+
+fn default_building_block(tags: &TagMap) -> Block {
     match tags.get("building:material").map(|s| s.as_str()) {
         Some("brick") => Block::Brick,
         Some("wood") | Some("timber") => Block::OakPlanks,
@@ -598,20 +640,72 @@ mod tests {
     fn building_block_brick() {
         let mut tags = TagMap::new();
         tags.insert("building:material".into(), "brick".to_string());
-        assert_eq!(building_block(&tags), Block::Brick);
+        assert_eq!(building_block(&tags, None), Block::Brick);
     }
 
     #[test]
     fn building_block_default() {
         let tags = TagMap::new();
-        assert_eq!(building_block(&tags), Block::StoneBrick);
+        assert_eq!(building_block(&tags, None), Block::StoneBrick);
     }
 
     #[test]
     fn building_block_wood() {
         let mut tags = TagMap::new();
         tags.insert("building:material".into(), "wood".to_string());
-        assert_eq!(building_block(&tags), Block::OakPlanks);
+        assert_eq!(building_block(&tags, None), Block::OakPlanks);
+    }
+
+    // ── override behavior tests ─────────────────────────────────────────
+
+    #[test]
+    fn building_block_override_wins() {
+        let mut ov = BlockOverrides::default();
+        ov.building.insert("brick".to_string(), Block::OakPlanks);
+        let mut tags = TagMap::new();
+        tags.insert("building:material".into(), "brick".to_string());
+        assert_eq!(building_block(&tags, Some(&ov)), Block::OakPlanks);
+    }
+
+    #[test]
+    fn building_block_override_for_unknown_material_adds_mapping() {
+        let mut ov = BlockOverrides::default();
+        ov.building.insert("glass".to_string(), Block::GlassPane);
+        let mut tags = TagMap::new();
+        tags.insert("building:material".into(), "glass".to_string());
+        // "glass" has no built-in mapping; without the override it would fall
+        // back to StoneBrick. With it, it returns the override.
+        assert_eq!(building_block(&tags, None), Block::StoneBrick);
+        assert_eq!(building_block(&tags, Some(&ov)), Block::GlassPane);
+    }
+
+    #[test]
+    fn landuse_override_and_default() {
+        let mut ov = BlockOverrides::default();
+        ov.landuse.insert("farmland".to_string(), Block::Sand);
+        assert_eq!(landuse_to_block("farmland", None), Block::Dirt); // default
+        assert_eq!(landuse_to_block("farmland", Some(&ov)), Block::Sand); // override
+        assert_eq!(landuse_to_block("forest", Some(&ov)), Block::OakLog); // untouched default
+    }
+
+    #[test]
+    fn natural_override_and_default() {
+        let mut ov = BlockOverrides::default();
+        ov.natural.insert("wood".to_string(), Block::BirchLog);
+        assert_eq!(natural_to_block("wood", None), Block::OakLog); // default
+        assert_eq!(natural_to_block("wood", Some(&ov)), Block::BirchLog); // override
+    }
+
+    #[test]
+    fn highway_override_changes_surface_only() {
+        let mut ov = BlockOverrides::default();
+        ov.highway
+            .insert("motorway".to_string(), Block::SmoothStoneSlab);
+        let default_style = highway_to_style("motorway", None);
+        let overridden = highway_to_style("motorway", Some(&ov));
+        assert_eq!(overridden.surface, Block::SmoothStoneSlab); // surface replaced
+        assert_eq!(overridden.half_width, default_style.half_width); // width preserved
+        assert_eq!(overridden.sidewalk, default_style.sidewalk); // sidewalk preserved
     }
 
     #[test]

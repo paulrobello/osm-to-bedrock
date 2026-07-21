@@ -352,6 +352,7 @@ pub fn process_tile(
         conv,
         spatial_index,
         surface,
+        block_overrides: params.block_overrides.as_ref(),
     };
     let tile_ways = TileWays {
         landuse: &tile_landuse,

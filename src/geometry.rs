@@ -460,9 +460,10 @@ pub fn draw_building(
     surface: i32,
     height: i32,
     tags: &TagMap,
+    wall_block: Block,
     road_dir: Option<(f64, f64)>,
 ) {
-    let wall = blocks::building_block(tags);
+    let wall = wall_block;
 
     // Floor + ceiling via polygon fill
     let floor_pts = crate::convert::rasterize_polygon(pts);
@@ -607,6 +608,7 @@ pub fn draw_roof(
     surface: i32,
     height: i32,
     tags: &TagMap,
+    wall_block: Block,
 ) {
     if pts.is_empty() {
         return;
@@ -617,7 +619,7 @@ pub fn draw_roof(
         return;
     }
 
-    let wall = blocks::building_block(tags);
+    let wall = wall_block;
     let stair_block = if wall == Block::StoneBrick {
         Block::StoneBrickStairs
     } else {

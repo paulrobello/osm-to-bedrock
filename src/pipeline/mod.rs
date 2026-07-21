@@ -162,6 +162,7 @@ pub fn run_conversion(params: &ConvertParams, progress_cb: &dyn Fn(f32, &str)) -
 ///     vertical_scale: 1.0,
 ///     elevation_smoothing: 1,
 ///     surface_thickness: 4,
+///     block_overrides: None,
 /// };
 ///
 /// run_conversion_from_data(data, &params, &|progress, msg| {

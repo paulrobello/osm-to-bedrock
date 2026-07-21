@@ -38,6 +38,7 @@ pub struct RenderContext<'a> {
     pub conv: &'a CoordConverter,
     pub spatial_index: &'a SpatialIndex,
     pub surface: i32,
+    pub block_overrides: Option<&'a crate::blocks::BlockOverrides>,
 }
 
 /// Per-tile way index sets, pre-filtered from the global `SpatialIndex`.
@@ -122,12 +123,12 @@ fn render_landuse(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &TileW
             if natural == "water" {
                 continue;
             }
-            Some(blocks::natural_to_block(natural))
+            Some(blocks::natural_to_block(natural, ctx.block_overrides))
         } else if let Some(lu) = way.tags.get("landuse") {
             if matches!(lu.as_str(), "reservoir" | "water" | "basin") {
                 continue;
             }
-            Some(blocks::landuse_to_block(lu))
+            Some(blocks::landuse_to_block(lu, ctx.block_overrides))
         } else {
             None
         };
@@ -151,12 +152,12 @@ fn render_landuse(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &TileW
             if natural == "water" {
                 continue;
             }
-            Some(blocks::natural_to_block(natural))
+            Some(blocks::natural_to_block(natural, ctx.block_overrides))
         } else if let Some(lu) = rel.tags.get("landuse") {
             if matches!(lu.as_str(), "reservoir" | "water" | "basin") {
                 continue;
             }
-            Some(blocks::landuse_to_block(lu))
+            Some(blocks::landuse_to_block(lu, ctx.block_overrides))
         } else {
             None
         };
@@ -290,7 +291,7 @@ fn render_roads(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &TileWay
             continue;
         }
         if let Some(hw) = way.tags.get("highway") {
-            let mut style = blocks::highway_to_style(hw);
+            let mut style = blocks::highway_to_style(hw, ctx.block_overrides);
             if let Some(lanes_str) = way.tags.get("lanes")
                 && let Ok(lanes) = lanes_str.parse::<i32>()
             {
@@ -374,12 +375,14 @@ fn render_buildings(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &Til
             );
             let straight_pts = convert::straighten_polygon(pts, params.wall_straighten_threshold);
             let pts = &straight_pts;
+            let wall = blocks::building_block(&way.tags, ctx.block_overrides);
             draw_building(
                 world,
                 pts,
                 building_surface,
                 params.building_height,
                 &way.tags,
+                wall,
                 building_road_dir,
             );
             draw_roof(
@@ -388,6 +391,7 @@ fn render_buildings(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &Til
                 building_surface,
                 params.building_height,
                 &way.tags,
+                wall,
             );
         }
     }
@@ -395,7 +399,7 @@ fn render_buildings(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &Til
     // Layer 4b: Buildings from multipolygon relations
     for rel in tile.relations {
         if rel.tags.contains_key("building") || rel.tags.contains_key("building:part") {
-            let wall = blocks::building_block(rel.tags);
+            let wall = blocks::building_block(rel.tags, ctx.block_overrides);
             for outer in &rel.outers {
                 let rel_surface = if outer.is_empty() {
                     surface
@@ -432,7 +436,14 @@ fn render_buildings(world: &mut dyn WorldWriter, ctx: &RenderContext, tile: &Til
                         }
                     }
                 }
-                draw_roof(world, outer, rel_surface, params.building_height, rel.tags);
+                draw_roof(
+                    world,
+                    outer,
+                    rel_surface,
+                    params.building_height,
+                    rel.tags,
+                    wall,
+                );
             }
         }
     }

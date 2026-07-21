@@ -356,6 +356,7 @@ fn with_render_context<R>(
         conv: &conv,
         spatial_index: &spatial_index,
         surface: surface_y,
+        block_overrides: params.block_overrides.as_ref(),
     };
     let tile = TileWays {
         landuse: &spatial_index.landuse,
@@ -413,6 +414,7 @@ fn default_params(edition: Edition) -> ConvertParams {
         vertical_scale: 1.0,
         elevation_smoothing: 0,
         surface_thickness: 4,
+        block_overrides: None,
     }
 }
 
