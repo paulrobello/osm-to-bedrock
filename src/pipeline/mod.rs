@@ -69,11 +69,13 @@ use crate::world::{Edition, WorldWriter};
 
 mod decoration;
 mod preview;
+mod progress;
 mod render;
 mod terrain;
 pub mod util;
 
 pub use preview::{run_conversion_preview, run_preview_from_data, run_surface_preview};
+pub use progress::{ProgressReport, format_duration, format_rate};
 pub use render::{RenderContext, TileWays, render_osm_features};
 pub use terrain::{process_tile, run_terrain_only, run_terrain_only_to_disk};
 pub use util::{coord_hash, is_closed_way, zip_directory};
