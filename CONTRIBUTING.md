@@ -138,9 +138,9 @@ docs/                 Project documentation (ARCHITECTURE, CLI, DEVELOPER_INFO, 
 Dockerfile            Three-stage build (Rust + bun + node runtime)
 docker-entrypoint.sh  Container entrypoint — starts Rust API + Next.js, enforces SEC-001 safe-bind
 Makefile              All development targets (build/test/lint/fmt/typecheck/checkall/web-*/docker-*)
-Cargo.toml            Rust dependencies and metadata (par-osm-rust pinned to =0.1.1)
+Cargo.toml            Rust dependencies and metadata (par-osm-rust pinned to =0.5.0)
 ```
 
-The project targets both **Bedrock** and **Java Edition** Minecraft output via `--edition bedrock|java`. Bedrock streams tile-by-tile; Java accumulates in memory and is bounded by `enforce_java_memory_budget` until a streaming Anvil writer lands.
+The project targets both **Bedrock** and **Java Edition** Minecraft output via `--edition bedrock|java`. Both editions stream tile-by-tile, bounding peak memory to roughly one tile's worth of chunks (streaming Anvil writer, ARC-001).
 
 See [docs/DEVELOPER_INFO.md](docs/DEVELOPER_INFO.md) for a full architecture reference, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the streaming tile pipeline and server layout, and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for Docker and self-hosting.

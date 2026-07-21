@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+- **`par-osm-rust` bumped `=0.3.0` → `=0.5.0`.** 0.5.0 ships one breaking change (ENH-008): every `tags` field is now `TagMap = HashMap<Arc<str>, String>` with interned keys. Reads stay source-compatible (`Arc<str>: Borrow<str>`); only explicit types and tag-key construction change. The seven `&HashMap<String, String>` tag annotations moved to `&TagMap` (`ResolvedRelation`, `classify_way`, `draw_building`/`draw_roof`, `waterway_to_style`/`building_block`, `resolve_poi_type`), the GeoJSON tag→properties map switched `k.clone()` → `k.to_string()` (`Arc<str>` has no stable `as_str`), `resolve_poi_type`'s `&k.as_str()` became a `let key: &str = k;` deref binding, and every tag-key construction site went `"key".to_string()` → `"key".into()`. The seven re-export shims are unchanged. 0.3.1 (additive `tagged_nodes`) and 0.4.0 (ENH-003 reclassifies standalone `man_made`/`natural` nodes into `poi_nodes`) needed no migration — no test asserts the affected POI counts, so the full suite passes unchanged.
 
 ---
 
