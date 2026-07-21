@@ -131,6 +131,8 @@ pub fn run_convert(args: &ConvertArgs, config: &Config) -> Result<()> {
 /// `fetch-convert` — fetch OSM data from Overpass (optionally merged with
 /// Overture) and convert it into a Minecraft world in one step.
 pub fn run_fetch_convert(args: &FetchConvertArgs, config: &Config) -> Result<()> {
+    let block_overrides =
+        crate::block_mapping::load_block_overrides_arg(&args.building.block_mapping)?;
     let bbox = parse_bbox(&args.bbox)?;
     let filter = filter::FeatureFilter {
         roads: !(args.no_roads || config.no_roads.unwrap_or(false)),
@@ -206,9 +208,6 @@ pub fn run_fetch_convert(args: &FetchConvertArgs, config: &Config) -> Result<()>
 
     let output = args.output.join(&args.world_name);
     std::fs::create_dir_all(&output)?;
-
-    let block_overrides =
-        crate::block_mapping::load_block_overrides_arg(&args.building.block_mapping)?;
     let convert_params = ConvertParams {
         input: None,
         output,
@@ -258,6 +257,8 @@ pub fn run_fetch_convert(args: &FetchConvertArgs, config: &Config) -> Result<()>
 /// `overture-convert` — build a world from Overture Maps data only
 /// (no OSM/Overpass required).
 pub fn run_overture_convert(args: &OvertureConvertArgs, config: &Config) -> Result<()> {
+    let block_overrides =
+        crate::block_mapping::load_block_overrides_arg(&args.building.block_mapping)?;
     let bbox = parse_bbox(&args.bbox)?;
     let themes = source_options::parse_overture_themes(&args.themes)?;
     let overture_params = crate::params::OvertureParams {
@@ -278,9 +279,6 @@ pub fn run_overture_convert(args: &OvertureConvertArgs, config: &Config) -> Resu
 
     let output = args.output.join(&args.world_name);
     std::fs::create_dir_all(&output)?;
-
-    let block_overrides =
-        crate::block_mapping::load_block_overrides_arg(&args.building.block_mapping)?;
     let convert_params = ConvertParams {
         input: None,
         output,
