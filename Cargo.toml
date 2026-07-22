@@ -47,3 +47,10 @@ notify = "8"
 [dev-dependencies]
 # `ServiceExt::oneshot` drives the real Axum router in `tests/server_api.rs`.
 tower = { version = "0.5", features = ["util"] }
+
+# Release profile tuned for binary size (fat LTO + single codegen unit + opt-level="z" + strip); trades compile time for a smaller binary.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

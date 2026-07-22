@@ -70,7 +70,7 @@ Set up Dependabot or Renovate for automated Cargo and npm dependency PRs.
 ### Binary Size Optimization
 Profile and reduce release binary size with `strip`, LTO, and `opt-level=z`. The converter should be easy to distribute.
 
-**Partial:** Release binaries are `strip`-ped in the release workflow, but `Cargo.toml` has no `[profile.release]` tuning (LTO, `opt-level=z`, `codegen-units=1`) yet.
+**Done:** `[profile.release]` in `Cargo.toml` is tuned for size — `opt-level = "z"`, `lto = true` (fat), `codegen-units = 1`, and `strip = true`. The `strip = true` profile knob also closes a latent gap where the release workflow only stripped Linux binaries (macOS/Windows shipped unstripped). Measured on macOS arm64: the release binary dropped from 11,161,544 bytes (10.64 MiB, stripped baseline) to 6,024,592 bytes (5.74 MiB) — a 46% reduction, ~4.9 MiB saved (57% vs the unstripped 13.48 MiB local build). `make checkall` stays green (303 tests). `panic = "abort"` was intentionally not added: it would shrink the binary further but changes runtime behavior (a panic aborts the process instead of unwinding, which affects the Axum server's task isolation); flagged as a future opt-in if smaller size is worth that trade.
 
 ---
 
