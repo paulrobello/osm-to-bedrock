@@ -622,6 +622,7 @@ mod tests {
 
 - [ ] **Step 2: Implement `nbt_be.rs`**
 
+{% raw %}
 ```rust
 //! Big-endian NBT writer for Java Edition.
 //!
@@ -799,6 +800,7 @@ pub fn encode_java_sign_entity(x: i32, y: i32, z: i32, text: &str) -> Vec<u8> {
     buf
 }
 ```
+{% endraw %}
 
 - [ ] **Step 3: Run tests**
 
