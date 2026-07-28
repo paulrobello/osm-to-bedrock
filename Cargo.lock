@@ -1633,7 +1633,7 @@ dependencies = [
  "notify",
  "osmpbf",
  "par-osm-rust",
- "quick-xml 0.39.4",
+ "quick-xml",
  "rayon",
  "reqwest",
  "rusty-leveldb",
@@ -1676,7 +1676,7 @@ dependencies = [
  "log",
  "memmap2 0.9.11",
  "osmpbf",
- "quick-xml 0.41.0",
+ "quick-xml",
  "reqwest",
  "serde",
  "serde_json",
@@ -1846,15 +1846,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
 dependencies = [
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "quick-xml"
-version = "0.39.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
-dependencies = [
- "memchr",
 ]
 
 [[package]]
